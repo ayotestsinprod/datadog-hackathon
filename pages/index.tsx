@@ -30,10 +30,15 @@ export default function Home() {
   const [hoveredReleaseId, setHoveredReleaseId] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const refreshButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     fetch("/api/products").then((r) => r.json()).then(setProducts);
   }, []);
+
+  useEffect(() => {
+    if (selectedProduct) refreshButtonRef.current?.focus();
+  }, [selectedProduct]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -266,7 +271,8 @@ export default function Home() {
                 )}
               </div>
               <button
-                className="shrink-0 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-sm px-4 py-2 rounded-lg disabled:opacity-50 transition-colors"
+                ref={refreshButtonRef}
+                className="shrink-0 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-sm px-4 py-2 rounded-lg disabled:opacity-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
                 onClick={handleRefresh}
                 disabled={loadingIngest}
               >
