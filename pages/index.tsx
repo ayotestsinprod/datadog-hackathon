@@ -295,8 +295,8 @@ export default function Home() {
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-6">
               Releases
             </p>
-            {loadingReleases ? (
-              <p className="text-sm text-gray-500">Loading…</p>
+            {loadingReleases || (loadingIngest && releases.length === 0) ? (
+              <p className="text-sm text-gray-500 animate-pulse">Loading…</p>
             ) : releases.length === 0 ? (
               <p className="text-sm text-gray-500">
                 No releases yet — hit Refresh to fetch them.
