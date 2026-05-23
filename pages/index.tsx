@@ -31,6 +31,7 @@ export default function Home() {
   const [hoveredReleaseId, setHoveredReleaseId] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [showMenu, setShowMenu] = useState(false);
+  const [everLoaded, setEverLoaded] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const refreshButtonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -71,6 +72,7 @@ export default function Home() {
   }
 
   async function selectProduct(p: Product) {
+    setEverLoaded(true);
     setSelectedProduct(p);
     setIsNew(false);
     setQuery(p.name);
@@ -153,6 +155,7 @@ export default function Home() {
     });
     const { id: product_id } = await createRes.json();
 
+    setEverLoaded(true);
     setSelectedProduct({ id: product_id, name: query, description: newDesc, links, favicon_url: "" });
     setIsNew(false);
 
@@ -174,7 +177,7 @@ export default function Home() {
     setLoadingIngest(false);
   }
 
-  const isIdle = !selectedProduct && !isNew;
+  const isIdle = !everLoaded && !selectedProduct && !isNew;
 
   // Shared combobox input props
   const inputProps = {
@@ -183,6 +186,8 @@ export default function Home() {
       setQuery(e.target.value);
       setShowDropdown(true);
       setHighlightedIndex(-1);
+      setSelectedProduct(null);
+      setReleases([]);
     },
     onFocus: () => setShowDropdown(true),
     onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
