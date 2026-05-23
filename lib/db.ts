@@ -59,6 +59,19 @@ export async function insertProduct(p: Omit<Product, "id">): Promise<string> {
   return id;
 }
 
+export async function deleteProduct(id: string): Promise<void> {
+  const tables = ["products", "releases", "release_feedback", "agent_passes", "action_outputs"];
+  const col = (t: string) => t === "products" ? "id" : "product_id";
+  await Promise.all(
+    tables.map((table) =>
+      clickhouse.command({
+        query: `ALTER TABLE ${table} DELETE WHERE ${col(table)} = {id:String}`,
+        query_params: { id },
+      })
+    )
+  );
+}
+
 export async function updateProduct(id: string, fields: { description?: string; links?: string[]; favicon_url?: string }): Promise<void> {
   const setParts: string[] = [];
   if (fields.description !== undefined) setParts.push(`description = {description:String}`);

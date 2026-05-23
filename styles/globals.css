@@ -20,9 +20,32 @@
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: #030712;
+  color: #f1f5f9;
   font-family: Arial, Helvetica, sans-serif;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1; }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease both;
+}
+.animate-fade-in-up-delay {
+  animation: fadeInUp 0.5s ease 0.1s both;
+}
+.animate-fade-in-up-delay-2 {
+  animation: fadeInUp 0.5s ease 0.2s both;
+}
+.glow-pulse {
+  animation: glow-pulse 3s ease-in-out infinite;
 }
 
 /* Slim dark scrollbars */
