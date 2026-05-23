@@ -5,6 +5,7 @@ interface Product {
   name: string;
   description: string;
   links: string[];
+  favicon_url: string;
 }
 
 interface Release {
@@ -29,8 +30,10 @@ export default function Home() {
   const [streamLog, setStreamLog] = useState<string[]>([]);
   const [hoveredReleaseId, setHoveredReleaseId] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [showMenu, setShowMenu] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const refreshButtonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch("/api/products").then((r) => r.json()).then(setProducts);
@@ -42,6 +45,9 @@ export default function Home() {
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowDropdown(false);
       }
@@ -70,6 +76,18 @@ export default function Home() {
     setQuery(p.name);
     setShowDropdown(false);
     await loadReleases(p.id);
+
+    // Backfill missing metadata for older products
+    if (!p.description || !p.favicon_url || p.links.length === 0) {
+      setLoadingIngest(true);
+      setStreamLog([]);
+      await streamAgent("/api/agent/initialize", { product_id: p.id, name: p.name, description: p.description, links: p.links });
+      const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+      setProducts(updated);
+      const fresh = updated.find((x) => x.id === p.id);
+      if (fresh) setSelectedProduct(fresh);
+      setLoadingIngest(false);
+    }
   }
 
   async function streamAgent(endpoint: string, body: object, onEvent?: (e: Record<string, unknown>) => void): Promise<void> {
@@ -97,8 +115,20 @@ export default function Home() {
     }
   }
 
+  async function handleDelete() {
+    if (!selectedProduct) return;
+    setShowMenu(false);
+    await fetch(`/api/products/${selectedProduct.id}`, { method: "DELETE" });
+    setSelectedProduct(null);
+    setReleases([]);
+    setQuery("");
+    const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+    setProducts(updated);
+  }
+
   async function handleRefresh() {
     if (!selectedProduct) return;
+    setShowMenu(false);
     setLoadingIngest(true);
     setStreamLog([]);
     const p = selectedProduct;
@@ -144,76 +174,108 @@ export default function Home() {
     setLoadingIngest(false);
   }
 
-  return (
-    <main className="min-h-screen bg-gray-950 text-gray-100 p-8">
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-2xl font-bold mb-8 tracking-tight">Pulse</h1>
+  const isIdle = !selectedProduct && !isNew;
 
-        {/* Combobox */}
-        <div className="relative mb-6" ref={dropdownRef}>
-          <input
-            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-blue-500"
-            placeholder="Search or add a product..."
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setShowDropdown(true);
-              setSelectedProduct(null);
-              setIsNew(false);
-              setReleases([]);
-              setHighlightedIndex(-1);
-            }}
-            onFocus={() => setShowDropdown(true)}
-            onKeyDown={(e) => {
-              // items = filtered products + optional "Add" entry at the end
-              const itemCount = filtered.length + (!exactMatch && query.trim() ? 1 : 0);
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setHighlightedIndex((i) => Math.min(i + 1, itemCount - 1));
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setHighlightedIndex((i) => Math.max(i - 1, 0));
-              } else if (e.key === "Enter") {
-                e.preventDefault();
-                if (highlightedIndex >= 0 && highlightedIndex < filtered.length) {
-                  selectProduct(filtered[highlightedIndex]);
-                } else if (highlightedIndex === filtered.length && !exactMatch && query.trim()) {
-                  setIsNew(true);
-                  setShowDropdown(false);
-                }
-              } else if (e.key === "Escape") {
-                setShowDropdown(false);
-              }
-            }}
-          />
-          {showDropdown && query.length > 0 && (
-            <div className="absolute top-full mt-1 w-full bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-10 overflow-hidden">
-              {filtered.map((p, i) => (
-                <button
-                  key={p.id}
-                  className={`w-full text-left px-4 py-3 text-sm border-b border-gray-800 last:border-0 ${highlightedIndex === i ? "bg-gray-800" : "hover:bg-gray-800"}`}
-                  onMouseDown={() => selectProduct(p)}
-                  onMouseEnter={() => setHighlightedIndex(i)}
-                >
-                  {p.name}
-                </button>
-              ))}
-              {!exactMatch && query.trim() && (
-                <button
-                  className={`w-full text-left px-4 py-3 text-sm text-blue-400 ${highlightedIndex === filtered.length ? "bg-gray-800" : "hover:bg-gray-800"}`}
-                  onMouseDown={() => { setIsNew(true); setShowDropdown(false); }}
-                  onMouseEnter={() => setHighlightedIndex(filtered.length)}
-                >
-                  + Add &quot;{query}&quot;
-                </button>
-              )}
+  // Shared combobox input props
+  const inputProps = {
+    value: query,
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      setQuery(e.target.value);
+      setShowDropdown(true);
+      setHighlightedIndex(-1);
+    },
+    onFocus: () => setShowDropdown(true),
+    onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
+      const itemCount = filtered.length + (!exactMatch && query.trim() ? 1 : 0);
+      if (e.key === "ArrowDown") { e.preventDefault(); setHighlightedIndex((i) => Math.min(i + 1, itemCount - 1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setHighlightedIndex((i) => Math.max(i - 1, 0)); }
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        if (highlightedIndex >= 0 && highlightedIndex < filtered.length) selectProduct(filtered[highlightedIndex]);
+        else if (highlightedIndex === filtered.length && !exactMatch && query.trim()) { setIsNew(true); setShowDropdown(false); }
+      } else if (e.key === "Escape") { setShowDropdown(false); }
+    },
+  };
+
+  const Dropdown = () => showDropdown && query.length > 0 ? (
+    <div className="absolute top-full mt-1 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-10 overflow-hidden">
+      {filtered.map((p, i) => (
+        <button key={p.id}
+          className={`w-full text-left px-4 py-3 text-sm flex items-center gap-2 border-b border-gray-800 last:border-0 ${highlightedIndex === i ? "bg-gray-800" : "hover:bg-gray-800"}`}
+          onMouseDown={() => selectProduct(p)} onMouseEnter={() => setHighlightedIndex(i)}>
+          {p.favicon_url && <img src={p.favicon_url} alt="" className="w-3.5 h-3.5 rounded-sm shrink-0" />}
+          {p.name}
+        </button>
+      ))}
+      {!exactMatch && query.trim() && (
+        <button
+          className={`w-full text-left px-4 py-3 text-sm text-teal-400 ${highlightedIndex === filtered.length ? "bg-gray-800" : "hover:bg-gray-800"}`}
+          onMouseDown={() => { setIsNew(true); setShowDropdown(false); }}
+          onMouseEnter={() => setHighlightedIndex(filtered.length)}>
+          + Add &quot;{query}&quot;
+        </button>
+      )}
+    </div>
+  ) : null;
+
+  return (
+    <main className="min-h-screen text-gray-100" style={{ background: "#030712" }}>
+
+      {/* ── HERO (idle) ── */}
+      {isIdle && (
+        <div className="min-h-screen flex flex-col items-center justify-center px-6 pb-24"
+          style={{ background: "radial-gradient(ellipse 70% 40% at 50% 0%, rgba(20,184,166,0.10) 0%, transparent 70%)" }}>
+
+          {/* Brand */}
+          <div className="animate-fade-in-up flex flex-col items-center mb-10">
+            <div className="flex items-center gap-2 mb-6">
+              <span className="w-2 h-2 rounded-full bg-teal-400 glow-pulse inline-block" />
+              <span className="text-xs font-mono text-teal-400 tracking-[0.2em] uppercase">Pulse</span>
             </div>
-          )}
+            <h1 className="text-5xl font-bold text-center text-white mb-4 tracking-tight leading-tight">
+              Track what the world<br />thinks of your product.
+            </h1>
+            <p className="text-gray-500 text-base text-center max-w-sm">
+              Releases, public sentiment, and the moments they intersect — on one timeline.
+            </p>
+          </div>
+
+          {/* Search */}
+          <div className="animate-fade-in-up-delay w-full max-w-md relative" ref={dropdownRef}>
+            <input {...inputProps}
+              className="w-full bg-gray-900/80 border border-gray-700 rounded-xl px-5 py-4 text-sm focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500/40 placeholder-gray-600 shadow-lg"
+              placeholder="Search or add a product…" />
+            <Dropdown />
+          </div>
+
         </div>
+      )}
+
+      {/* ── PRODUCT VIEW ── */}
+      {!isIdle && (
+        <div className="max-w-2xl mx-auto px-8 pt-8 pb-16">
+
+          {/* Compact header */}
+          <div className="flex items-center gap-3 mb-8">
+            <button
+              className="text-gray-600 hover:text-teal-400 transition-colors text-sm"
+              onClick={() => { setSelectedProduct(null); setIsNew(false); setQuery(""); setReleases([]); }}>
+              ← back
+            </button>
+            <span className="text-xs font-mono text-teal-500 tracking-widest">Pulse</span>
+          </div>
+
+          {/* Combobox (compact) */}
+          <div className="relative mb-6" ref={dropdownRef}>
+            <input {...inputProps}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-teal-500"
+              placeholder="Search or add a product…" />
+            <Dropdown />
+          </div>
 
         {/* New product form */}
         {isNew && (
-          <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 mb-6 space-y-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-6 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-300">New product: {query}</h2>
               <span className="text-xs text-gray-500">description and links are optional</span>
@@ -221,28 +283,20 @@ export default function Home() {
             <div>
               <label className="block text-xs text-gray-400 mb-1">Description</label>
               <textarea
-                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 resize-none"
-                rows={2}
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-                placeholder="What is this product? (optional)"
-              />
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none"
+                rows={2} value={newDesc} onChange={(e) => setNewDesc(e.target.value)}
+                placeholder="What is this product? (optional)" />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Links (one per line)</label>
               <textarea
-                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 resize-none font-mono"
-                rows={2}
-                value={newLinks}
-                onChange={(e) => setNewLinks(e.target.value)}
-                placeholder="https://github.com/org/repo/releases (optional)"
-              />
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none font-mono"
+                rows={2} value={newLinks} onChange={(e) => setNewLinks(e.target.value)}
+                placeholder="https://github.com/org/repo/releases (optional)" />
             </div>
             <button
-              className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-5 py-2 rounded-lg disabled:opacity-50"
-              onClick={handleCreate}
-              disabled={loadingIngest}
-            >
+              className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-5 py-2 rounded-lg disabled:opacity-50 transition-colors"
+              onClick={handleCreate} disabled={loadingIngest}>
               {loadingIngest ? "Fetching releases…" : "Fetch Releases"}
             </button>
           </div>
@@ -250,7 +304,7 @@ export default function Home() {
 
         {/* Selected product */}
         {selectedProduct && (
-          <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 mb-6">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
@@ -265,27 +319,36 @@ export default function Home() {
                 {selectedProduct.links?.length > 0 && (
                   <div className="flex flex-col gap-1">
                     {selectedProduct.links.map((l, i) => (
-                      <a
-                        key={i}
-                        href={l}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-blue-400 hover:underline truncate"
-                      >
+                      <a key={i} href={l} target="_blank" rel="noreferrer"
+                        className="text-xs text-teal-500 hover:text-teal-300 hover:underline truncate transition-colors">
                         {l}
                       </a>
                     ))}
                   </div>
                 )}
               </div>
-              <button
-                ref={refreshButtonRef}
-                className="shrink-0 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-sm px-4 py-2 rounded-lg disabled:opacity-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-                onClick={handleRefresh}
-                disabled={loadingIngest}
-              >
-                {loadingIngest ? "Refreshing…" : "↻ Refresh"}
-              </button>
+              {/* Context menu */}
+              <div className="relative shrink-0" ref={menuRef}>
+                <button
+                  ref={refreshButtonRef}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 hover:text-gray-200 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-teal-500/40 transition-colors"
+                  onClick={() => setShowMenu((v) => !v)} disabled={loadingIngest}>
+                  <span className="text-lg leading-none tracking-widest">···</span>
+                </button>
+                {showMenu && (
+                  <div className="absolute right-0 top-full mt-1 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
+                    <button className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2" onClick={handleRefresh}>
+                      <span>↻</span> Refresh releases
+                    </button>
+                    <button className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-gray-800 flex items-center gap-2 border-t border-gray-800" onClick={handleDelete}>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
             {loadingIngest && streamLog.length > 0 && (
               <div className="mt-4 pt-4 border-t border-gray-800">
@@ -300,20 +363,14 @@ export default function Home() {
         {/* Timeline */}
         {(selectedProduct || loadingReleases) && (
           <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-6">
-              Releases
-            </p>
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-6">Releases</p>
             {loadingReleases || (loadingIngest && releases.length === 0) ? (
-              <p className="text-sm text-gray-500 animate-pulse">Loading…</p>
+              <p className="text-sm text-gray-600 animate-pulse">Loading…</p>
             ) : releases.length === 0 ? (
-              <p className="text-sm text-gray-500">
-                No releases yet — hit Refresh to fetch them.
-              </p>
+              <p className="text-sm text-gray-600">No releases yet — use ··· to refresh.</p>
             ) : (
-              <div
-                className="overflow-x-auto -mx-8 px-8 pb-2"
-                style={{ scrollbarWidth: "thin", scrollbarColor: "#374151 transparent" }}
-              >
+              <div className="overflow-x-auto -mx-8 px-8 pb-2"
+                style={{ scrollbarWidth: "thin", scrollbarColor: "#374151 transparent" }}>
                 {(() => {
                   const ITEM_W = 140;
                   const TOOLTIP_W = 220;
@@ -321,44 +378,31 @@ export default function Home() {
                   const totalWidth = Math.max(releases.length * ITEM_W + 60, 500);
                   return (
                     <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 60 }}>
-                      {/* Axis line */}
-                      <div className="absolute bg-gray-700" style={{ top: AXIS_Y, left: 20, right: 20, height: 1 }} />
+                      <div className="absolute bg-gray-800" style={{ top: AXIS_Y, left: 20, right: 20, height: 1 }} />
                       {releases.map((r, i) => {
                         const cx = 20 + i * ITEM_W + ITEM_W / 2;
                         const isHovered = hoveredReleaseId === r.id;
-                        // Clamp tooltip so it never overflows the scroll container
                         const rawLeft = cx - TOOLTIP_W / 2;
                         const tooltipLeft = Math.max(4, Math.min(rawLeft, totalWidth - TOOLTIP_W - 4));
                         return (
-                          <div
-                            key={r.id}
-                            className="absolute cursor-default"
+                          <div key={r.id} className="absolute cursor-default"
                             style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 60 }}
                             onMouseEnter={() => setHoveredReleaseId(r.id)}
-                            onMouseLeave={() => setHoveredReleaseId(null)}
-                          >
-                            {/* Tooltip — clamped to stay within scroll bounds, max height to prevent vertical overflow */}
+                            onMouseLeave={() => setHoveredReleaseId(null)}>
                             {isHovered && (
-                              <div
-                                className="absolute z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl overflow-y-auto"
-                                style={{ top: 4, left: tooltipLeft - (cx - ITEM_W / 2), width: TOOLTIP_W, maxHeight: AXIS_Y - 16 }}
-                              >
+                              <div className="absolute z-20 bg-gray-900 border border-gray-700 rounded-xl p-3 shadow-xl overflow-y-auto"
+                                style={{ top: 4, left: tooltipLeft - (cx - ITEM_W / 2), width: TOOLTIP_W, maxHeight: AXIS_Y - 16 }}>
                                 <p className="text-xs font-semibold text-white mb-1">{r.name}</p>
-                                <p className="text-xs text-gray-400 mb-2">{r.date}</p>
-                                <p className="text-xs text-gray-300 leading-relaxed">{r.summary}</p>
+                                <p className="text-xs text-teal-500 mb-2">{r.date}</p>
+                                <p className="text-xs text-gray-400 leading-relaxed">{r.summary}</p>
                               </div>
                             )}
-                            {/* Tick */}
-                            <div className="absolute bg-gray-600" style={{ left: "50%", top: AXIS_Y - 10, width: 1, height: 11 }} />
-                            {/* Dot */}
-                            <div
-                              className={`absolute rounded-full border-2 border-gray-950 transition-colors ${isHovered ? "bg-blue-400" : "bg-blue-500"}`}
-                              style={{ left: "50%", top: AXIS_Y - 6, transform: "translateX(-50%)", width: 14, height: 14 }}
-                            />
-                            {/* Label below axis */}
+                            <div className="absolute bg-gray-700" style={{ left: "50%", top: AXIS_Y - 10, width: 1, height: 11 }} />
+                            <div className={`absolute rounded-full border-2 border-[#030712] transition-colors ${isHovered ? "bg-teal-400" : "bg-teal-600"}`}
+                              style={{ left: "50%", top: AXIS_Y - 6, transform: "translateX(-50%)", width: 14, height: 14 }} />
                             <div className="absolute text-center" style={{ top: AXIS_Y + 12, left: 0, right: 0 }}>
-                              <p className="text-xs font-medium text-gray-300 truncate px-2">{r.name}</p>
-                              <p className="text-xs text-gray-600 mt-0.5">{r.date}</p>
+                              <p className="text-xs font-medium text-gray-400 truncate px-2">{r.name}</p>
+                              <p className="text-xs text-gray-700 mt-0.5">{r.date}</p>
                             </div>
                           </div>
                         );
@@ -370,7 +414,8 @@ export default function Home() {
             )}
           </div>
         )}
-      </div>
+        </div>
+      )}
     </main>
   );
 }
