@@ -13,6 +13,7 @@ const tables = [
     name      String,
     description String,
     links     Array(String),
+    favicon_url String DEFAULT '',
     created_at DateTime DEFAULT now()
   ) ENGINE = MergeTree()
   ORDER BY id
@@ -43,6 +44,18 @@ const tables = [
   ORDER BY (product_id, date)
   `,
   `
+  CREATE TABLE IF NOT EXISTS feedback_summaries (
+    id         String,
+    product_id String,
+    start_date Date,
+    end_date   Date,
+    summary    String,
+    highlights Array(String),
+    created_at DateTime DEFAULT now()
+  ) ENGINE = MergeTree()
+  ORDER BY (product_id, start_date)
+  `,
+  `
   CREATE TABLE IF NOT EXISTS agent_passes (
     id           String,
     agent_type   String,
@@ -66,11 +79,22 @@ const tables = [
   `,
 ];
 
+const alterations = [
+  {
+    name: "products.favicon_url",
+    query: "ALTER TABLE products ADD COLUMN IF NOT EXISTS favicon_url String DEFAULT ''",
+  },
+];
+
 async function migrate() {
   for (const ddl of tables) {
     await clickhouse.command({ query: ddl });
     const name = ddl.match(/CREATE TABLE IF NOT EXISTS (\w+)/)?.[1];
     console.log(`✓ ${name}`);
+  }
+  for (const alteration of alterations) {
+    await clickhouse.command({ query: alteration.query });
+    console.log(`✓ ${alteration.name}`);
   }
   console.log("Migration complete.");
   await clickhouse.close();

@@ -200,6 +200,14 @@ export async function executeTool(
       const res = await fetch(input.url as string, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; PulseBot/1.0)" },
       });
+      if (!res.ok) {
+        const body = await res.text();
+        return JSON.stringify({
+          error: `Failed to fetch ${input.url}: HTTP ${res.status} ${res.statusText}`,
+          status: res.status,
+          body_preview: body.slice(0, 500),
+        });
+      }
       const html = await res.text();
       const text = html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 
 const TIMELINE_LEFT_PAD = 700;
+const MAX_STREAM_LOG_LINES = 8;
 
 interface Product {
   id: string;
@@ -131,6 +132,14 @@ export default function Home() {
     (p) => p.name.toLowerCase() === query.toLowerCase()
   );
 
+  function appendStreamLog(line: string) {
+    setStreamLog((current) => [...current.slice(-(MAX_STREAM_LOG_LINES - 1)), line]);
+  }
+
+  function messageFromError(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+  }
+
   async function loadReleases(productId: string) {
     setLoadingReleases(true);
     const [relRes, fbRes, sumRes] = await Promise.all([
@@ -156,12 +165,17 @@ export default function Home() {
     if (p.id !== "9a6188ba-eda0-45e0-a6f0-507fecbfed0a" && (!p.description || !p.favicon_url || p.links.length === 0)) {
       setLoadingIngest(true);
       setStreamLog([]);
-      await streamAgent("/api/agent/initialize", { product_id: p.id, name: p.name, description: p.description, links: p.links });
-      const updated: Product[] = await fetch("/api/products").then((r) => r.json());
-      setProducts(updated);
-      const fresh = updated.find((x) => x.id === p.id);
-      if (fresh) setSelectedProduct(fresh);
-      setLoadingIngest(false);
+      try {
+        await streamAgent("/api/agent/initialize", { product_id: p.id, name: p.name, description: p.description, links: p.links });
+        const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+        setProducts(updated);
+        const fresh = updated.find((x) => x.id === p.id);
+        if (fresh) setSelectedProduct(fresh);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoadingIngest(false);
+      }
     }
   }
 
@@ -171,7 +185,13 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const reader = res.body!.getReader();
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Agent request failed (${res.status}): ${text || res.statusText}`);
+    }
+    if (!res.body) throw new Error("Agent stream did not include a response body");
+
+    const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     while (true) {
@@ -182,10 +202,32 @@ export default function Home() {
       buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.startsWith("data: ")) continue;
-        const event = JSON.parse(line.slice(6)) as Record<string, unknown>;
-        if (event.type === "tool_call") setStreamLog(() => [`→ ${event.name}`]);
-        if (event.type === "release_inserted") setStreamLog(() => [`✓ ${event.name}`]);
-        if (event.type === "summary_inserted") setStreamLog(() => [`✓ summary ${event.start_date} → ${event.end_date}`]);
+        let event: Record<string, unknown>;
+        try {
+          event = JSON.parse(line.slice(6)) as Record<string, unknown>;
+        } catch (err) {
+          appendStreamLog(`! Could not parse agent event: ${messageFromError(err)}`);
+          continue;
+        }
+
+        if (event.type === "run_started") {
+          const runId = typeof event.run_id === "string" ? event.run_id.slice(0, 8) : "unknown";
+          appendStreamLog(`run ${runId} started`);
+        }
+        if (event.type === "tool_call") appendStreamLog(`→ ${event.name}`);
+        if (event.type === "tool_error") appendStreamLog(`! ${event.name}: ${event.output_preview ?? "tool failed"}`);
+        if (event.type === "audit_error") appendStreamLog(`! audit log failed: ${event.message ?? "unknown error"}`);
+        if (event.type === "release_inserted") appendStreamLog(`✓ ${event.name}`);
+        if (event.type === "summary_inserted") appendStreamLog(`✓ summary ${event.start_date} → ${event.end_date}`);
+        if (event.type === "done") {
+          const failures = typeof event.tool_failures === "number" ? event.tool_failures : 0;
+          appendStreamLog(failures > 0 ? `done with ${failures} warning${failures === 1 ? "" : "s"}` : "done");
+        }
+        if (event.type === "error") {
+          const message = typeof event.message === "string" ? event.message : "Agent failed";
+          appendStreamLog(`! ${message}`);
+          throw new Error(message);
+        }
         onEvent?.(event);
       }
     }
@@ -211,12 +253,19 @@ export default function Home() {
     setLoadingIngest(true);
     setStreamLog([]);
     const p = selectedProduct;
-    await streamAgent("/api/agent/refresh", { product_id: p.id, name: p.name, description: p.description, links: p.links });
-    await loadReleases(p.id);
-    const updated: Product[] = await fetch("/api/products").then((r) => r.json());
-    const fresh = updated.find((x) => x.id === p.id);
-    if (fresh) { setSelectedProduct(fresh); setProducts(updated); }
-    setLoadingIngest(false);
+    const agentBody = { product_id: p.id, name: p.name, description: p.description, links: p.links };
+    try {
+      await streamAgent("/api/agent/refresh", agentBody);
+      await loadReleases(p.id);
+      // Re-fetch product to pick up any updated metadata
+      const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+      const fresh = updated.find((x) => x.id === p.id);
+      if (fresh) { setSelectedProduct(fresh); setProducts(updated); }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingIngest(false);
+    }
   }
 
   async function handleSummarize() {
@@ -225,9 +274,14 @@ export default function Home() {
     setLoadingIngest(true);
     setStreamLog([]);
     const p = selectedProduct;
-    await streamAgent("/api/agent/summarize", { product_id: p.id, name: p.name, releases });
-    await loadReleases(p.id);
-    setLoadingIngest(false);
+    try {
+      await streamAgent("/api/agent/summarize", { product_id: p.id, name: p.name, releases });
+      await loadReleases(p.id);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingIngest(false);
+    }
   }
 
   async function handleCreate() {
@@ -249,19 +303,24 @@ export default function Home() {
     setStreamLog([]);
     const agentBody = { product_id, name: query, description: newDesc, links };
 
-    // Run agents sequentially: populate metadata, fetch releases, then summarize feedback
-    await streamAgent("/api/agent/initialize", agentBody);
-    await streamAgent("/api/agent/refresh", agentBody);
-    await streamAgent("/api/agent/summarize", { product_id, name: query });
+    try {
+      // Run agents sequentially: populate metadata, fetch releases, then summarize feedback
+      await streamAgent("/api/agent/initialize", agentBody);
+      await streamAgent("/api/agent/refresh", agentBody);
+      await streamAgent("/api/agent/summarize", { product_id, name: query });
 
-    // Re-fetch product to get populated description/links/favicon
-    const updated: Product[] = await fetch("/api/products").then((r) => r.json());
-    setProducts(updated);
-    const fresh = updated.find((p) => p.id === product_id);
-    if (fresh) setSelectedProduct(fresh);
+      // Re-fetch product to get populated description/links/favicon
+      const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+      setProducts(updated);
+      const fresh = updated.find((p) => p.id === product_id);
+      if (fresh) setSelectedProduct(fresh);
 
-    await loadReleases(product_id);
-    setLoadingIngest(false);
+      await loadReleases(product_id);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingIngest(false);
+    }
   }
 
   const isIdle = !everLoaded && !selectedProduct && !isNew;
@@ -291,26 +350,28 @@ export default function Home() {
     },
   };
 
-  const Dropdown = () => showDropdown && query.length > 0 ? (
-    <div className="absolute top-full mt-1 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-10 overflow-hidden">
-      {filtered.map((p, i) => (
-        <button key={p.id}
-          className={`w-full text-left px-4 py-3 text-sm flex items-center gap-2 border-b border-gray-800 last:border-0 ${highlightedIndex === i ? "bg-gray-800" : "hover:bg-gray-800"}`}
-          onMouseDown={() => selectProduct(p)} onMouseEnter={() => setHighlightedIndex(i)}>
-          {p.favicon_url && <img src={p.favicon_url} alt="" className="w-3.5 h-3.5 rounded-sm shrink-0" />}
-          {p.name}
-        </button>
-      ))}
-      {!exactMatch && query.trim() && (
-        <button
-          className={`w-full text-left px-4 py-3 text-sm text-teal-400 ${highlightedIndex === filtered.length ? "bg-gray-800" : "hover:bg-gray-800"}`}
-          onMouseDown={() => { setIsNew(true); setShowDropdown(false); }}
-          onMouseEnter={() => setHighlightedIndex(filtered.length)}>
-          + Add &quot;{query}&quot;
-        </button>
-      )}
-    </div>
-  ) : null;
+  function renderDropdown() {
+    return showDropdown && query.length > 0 ? (
+      <div className="absolute top-full mt-1 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-10 overflow-hidden">
+        {filtered.map((p, i) => (
+          <button key={p.id}
+            className={`w-full text-left px-4 py-3 text-sm flex items-center gap-2 border-b border-gray-800 last:border-0 ${highlightedIndex === i ? "bg-gray-800" : "hover:bg-gray-800"}`}
+            onMouseDown={() => selectProduct(p)} onMouseEnter={() => setHighlightedIndex(i)}>
+            {p.favicon_url && <img src={p.favicon_url} alt="" className="w-3.5 h-3.5 rounded-sm shrink-0" />}
+            {p.name}
+          </button>
+        ))}
+        {!exactMatch && query.trim() && (
+          <button
+            className={`w-full text-left px-4 py-3 text-sm text-teal-400 ${highlightedIndex === filtered.length ? "bg-gray-800" : "hover:bg-gray-800"}`}
+            onMouseDown={() => { setIsNew(true); setShowDropdown(false); }}
+            onMouseEnter={() => setHighlightedIndex(filtered.length)}>
+            + Add &quot;{query}&quot;
+          </button>
+        )}
+      </div>
+    ) : null;
+  }
 
   return (
     <main className="min-h-screen text-gray-100" style={{ background: "#030712" }}>
@@ -339,7 +400,7 @@ export default function Home() {
             <input {...inputProps}
               className="w-full bg-gray-900/80 border border-gray-700 rounded-xl px-5 py-4 text-sm focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500/40 placeholder-gray-600 shadow-lg"
               placeholder="Search or add a product…" />
-            <Dropdown />
+            {renderDropdown()}
           </div>
 
         </div>
@@ -366,7 +427,7 @@ export default function Home() {
               <input {...inputProps}
                 className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-teal-500"
                 placeholder="Search or add a product…" />
-              <Dropdown />
+              {renderDropdown()}
             </div>
 
             {/* New product form */}
@@ -449,11 +510,15 @@ export default function Home() {
                     )}
                   </div>
                 </div>
-                {loadingIngest && streamLog.length > 0 && (
+                {streamLog.length > 0 && (
                   <div className="mt-4 pt-4 border-t border-gray-800">
-                    <p className="text-xs text-gray-500 font-mono animate-pulse">
-                      {streamLog[streamLog.length - 1] ?? "…"}
-                    </p>
+                    <div className={`space-y-1 ${loadingIngest ? "animate-pulse" : ""}`}>
+                      {streamLog.map((line, index) => (
+                        <p key={`${line}-${index}`} className="text-xs text-gray-500 font-mono break-words">
+                          {line}
+                        </p>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
