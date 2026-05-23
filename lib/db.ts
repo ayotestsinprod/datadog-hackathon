@@ -39,6 +39,16 @@ export interface AgentPass {
   rows_created: string[];
 }
 
+export interface FeedbackSummary {
+  id: string;
+  product_id: string;
+  start_date: string;
+  end_date: string;
+  summary: string;
+  highlights: string[]; // each element is a JSON-encoded {raw_text, source_type, score, date}
+  created_at?: string;
+}
+
 export interface ActionOutput {
   id: string;
   product_id: string;
@@ -124,6 +134,16 @@ export async function insertActionOutput(o: Omit<ActionOutput, "id">): Promise<s
   return id;
 }
 
+export async function insertFeedbackSummary(s: Omit<FeedbackSummary, "id" | "created_at">): Promise<string> {
+  const id = randomUUID();
+  await clickhouse.insert({
+    table: "feedback_summaries",
+    values: [{ ...s, id }],
+    format: "JSONEachRow",
+  });
+  return id;
+}
+
 // --- Queries ---
 
 export async function getProducts(): Promise<Product[]> {
@@ -147,6 +167,24 @@ export async function getFeedbackForProduct(product_id: string): Promise<Release
   const result = await clickhouse.query({
     query: "SELECT * FROM release_feedback WHERE product_id = {product_id:String} ORDER BY date DESC",
     query_params: { product_id },
+    format: "JSONEachRow",
+  });
+  return result.json<ReleaseFeedback>();
+}
+
+export async function getFeedbackSummariesForProduct(product_id: string): Promise<FeedbackSummary[]> {
+  const result = await clickhouse.query({
+    query: "SELECT * FROM feedback_summaries WHERE product_id = {product_id:String} ORDER BY start_date ASC",
+    query_params: { product_id },
+    format: "JSONEachRow",
+  });
+  return result.json<FeedbackSummary>();
+}
+
+export async function getFeedbackInRange(product_id: string, start_date: string, end_date: string): Promise<ReleaseFeedback[]> {
+  const result = await clickhouse.query({
+    query: "SELECT * FROM release_feedback WHERE product_id = {product_id:String} AND date >= {start:String} AND date <= {end:String} ORDER BY date ASC LIMIT 200",
+    query_params: { product_id, start: start_date, end: end_date },
     format: "JSONEachRow",
   });
   return result.json<ReleaseFeedback>();

@@ -28,6 +28,46 @@ interface Feedback {
   raw_text: string;
 }
 
+interface FeedbackSummary {
+  id: string;
+  product_id: string;
+  start_date: string;
+  end_date: string;
+  summary: string;
+  highlights: string[];
+}
+
+const SOURCE_COLORS: Record<string, string> = {
+  twitter: "#1d9bf0",
+  youtube: "#ff4444",
+  blog: "#f59e0b",
+  review_site: "#8b5cf6",
+  other: "#6b7280",
+};
+
+function SimplePie({ counts }: { counts: Record<string, number> }) {
+  const entries = Object.entries(counts).filter(([, v]) => v > 0);
+  const total = entries.reduce((s, [, v]) => s + v, 0);
+  if (total === 0) return null;
+  const R = 22, cx = 24, cy = 24;
+  let angle = -Math.PI / 2;
+  return (
+    <svg width={48} height={48} className="shrink-0">
+      {entries.map(([type, count]) => {
+        const sweep = (count / total) * 2 * Math.PI;
+        const x1 = cx + R * Math.cos(angle);
+        const y1 = cy + R * Math.sin(angle);
+        angle += sweep;
+        const x2 = cx + R * Math.cos(angle);
+        const y2 = cy + R * Math.sin(angle);
+        const large = sweep > Math.PI ? 1 : 0;
+        return <path key={type} d={`M ${cx} ${cy} L ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2} Z`}
+          fill={SOURCE_COLORS[type] ?? "#6b7280"} />;
+      })}
+    </svg>
+  );
+}
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
@@ -38,6 +78,9 @@ export default function Home() {
   const [newLinks, setNewLinks] = useState("");
   const [releases, setReleases] = useState<Release[]>([]);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
+  const [summaries, setSummaries] = useState<FeedbackSummary[]>([]);
+  const [hoveredSummaryId, setHoveredSummaryId] = useState<string | null>(null);
+  const [expandedSummaryId, setExpandedSummaryId] = useState<string | null>(null);
   const [loadingReleases, setLoadingReleases] = useState(false);
   const [loadingIngest, setLoadingIngest] = useState(false);
   const [streamLog, setStreamLog] = useState<string[]>([]);
@@ -90,12 +133,14 @@ export default function Home() {
 
   async function loadReleases(productId: string) {
     setLoadingReleases(true);
-    const [relRes, fbRes] = await Promise.all([
+    const [relRes, fbRes, sumRes] = await Promise.all([
       fetch(`/api/releases?product_id=${productId}`),
       fetch(`/api/feedback?product_id=${productId}`),
+      fetch(`/api/summaries?product_id=${productId}`),
     ]);
     setReleases(await relRes.json());
     setFeedback(await fbRes.json());
+    setSummaries(await sumRes.json());
     setLoadingReleases(false);
   }
 
@@ -140,6 +185,7 @@ export default function Home() {
         const event = JSON.parse(line.slice(6)) as Record<string, unknown>;
         if (event.type === "tool_call") setStreamLog(() => [`→ ${event.name}`]);
         if (event.type === "release_inserted") setStreamLog(() => [`✓ ${event.name}`]);
+        if (event.type === "summary_inserted") setStreamLog(() => [`✓ summary ${event.start_date} → ${event.end_date}`]);
         onEvent?.(event);
       }
     }
@@ -152,6 +198,7 @@ export default function Home() {
     setSelectedProduct(null);
     setReleases([]);
     setFeedback([]);
+    setSummaries([]);
     setQuery("");
     const updated: Product[] = await fetch("/api/products").then((r) => r.json());
     setProducts(updated);
@@ -164,13 +211,22 @@ export default function Home() {
     setLoadingIngest(true);
     setStreamLog([]);
     const p = selectedProduct;
-    const agentBody = { product_id: p.id, name: p.name, description: p.description, links: p.links };
-    await streamAgent("/api/agent/refresh", agentBody);
+    await streamAgent("/api/agent/refresh", { product_id: p.id, name: p.name, description: p.description, links: p.links });
     await loadReleases(p.id);
-    // Re-fetch product to pick up any updated metadata
     const updated: Product[] = await fetch("/api/products").then((r) => r.json());
     const fresh = updated.find((x) => x.id === p.id);
     if (fresh) { setSelectedProduct(fresh); setProducts(updated); }
+    setLoadingIngest(false);
+  }
+
+  async function handleSummarize() {
+    if (!selectedProduct) return;
+    setShowMenu(false);
+    setLoadingIngest(true);
+    setStreamLog([]);
+    const p = selectedProduct;
+    await streamAgent("/api/agent/summarize", { product_id: p.id, name: p.name, releases });
+    await loadReleases(p.id);
     setLoadingIngest(false);
   }
 
@@ -193,9 +249,10 @@ export default function Home() {
     setStreamLog([]);
     const agentBody = { product_id, name: query, description: newDesc, links };
 
-    // Run both agents sequentially: first populate metadata, then fetch releases
+    // Run agents sequentially: populate metadata, fetch releases, then summarize feedback
     await streamAgent("/api/agent/initialize", agentBody);
     await streamAgent("/api/agent/refresh", agentBody);
+    await streamAgent("/api/agent/summarize", { product_id, name: query });
 
     // Re-fetch product to get populated description/links/favicon
     const updated: Product[] = await fetch("/api/products").then((r) => r.json());
@@ -219,6 +276,7 @@ export default function Home() {
       setSelectedProduct(null);
       setReleases([]);
       setFeedback([]);
+      setSummaries([]);
     },
     onFocus: () => setShowDropdown(true),
     onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -297,7 +355,7 @@ export default function Home() {
             <div className="flex items-center gap-3 mb-8">
               <button
                 className="text-gray-600 hover:text-teal-400 transition-colors text-sm"
-                onClick={() => { setSelectedProduct(null); setIsNew(false); setQuery(""); setReleases([]); setFeedback([]); }}>
+                onClick={() => { setSelectedProduct(null); setIsNew(false); setQuery(""); setReleases([]); setFeedback([]); setSummaries([]); }}>
                 ← back
               </button>
               <span className="text-xs font-mono text-teal-500 tracking-widest">Pulse</span>
@@ -374,9 +432,12 @@ export default function Home() {
                       <span className="text-lg leading-none tracking-widest">···</span>
                     </button>
                     {showMenu && (
-                      <div className="absolute right-0 top-full mt-1 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
+                      <div className="absolute right-0 top-full mt-1 w-52 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
                         <button className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2" onClick={handleRefresh}>
                           <span>↻</span> Refresh releases
+                        </button>
+                        <button className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2 border-t border-gray-800" onClick={handleSummarize}>
+                          <span>✦</span> Refresh analysis
                         </button>
                         <button className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-gray-800 flex items-center gap-2 border-t border-gray-800" onClick={handleDelete}>
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -443,6 +504,12 @@ export default function Home() {
                   const totalWidth = LEFT_PAD + sorted.length * ITEM_W + 60 + 800;
                   const firstCx = LEFT_PAD + 20 + ITEM_W / 2;
                   const lastCx = LEFT_PAD + 20 + (sorted.length - 1) * ITEM_W + ITEM_W / 2;
+                  const firstRelTs = new Date(sorted[0].date).getTime();
+                  const lastRelTs = new Date(sorted[sorted.length - 1].date).getTime();
+                  const relSpan = lastRelTs - firstRelTs || 1;
+                  const dateToX = (d: string) => firstCx + ((new Date(d).getTime() - firstRelTs) / relSpan) * (lastCx - firstCx);
+                  const SPAN_Y = AXIS_Y + 52;
+                  const SPAN_H = 10;
 
                   let graphEl: React.ReactNode = null;
                   if (feedback.length > 0 && sorted.length > 0) {
@@ -455,11 +522,7 @@ export default function Home() {
                       else buckets[month].neg++;
                     }
                     const months = Object.keys(buckets).sort();
-                    // Map feedback months between the first and last release x-positions
-                    const minTs = new Date(sorted[0].date).getTime();
-                    const maxTs = new Date(sorted[sorted.length - 1].date).getTime();
-                    const span = maxTs - minTs || 1;
-                    const mToX = (m: string) => firstCx + ((new Date(m + "-15").getTime() - minTs) / span) * (lastCx - firstCx);
+                    const mToX = (m: string) => dateToX(m + "-15");
                     const maxCount = Math.max(...months.map(m => Math.max(buckets[m].pos, buckets[m].neu, buckets[m].neg)), 1);
                     const toY = (n: number) => GRAPH_BOTTOM - (n / maxCount) * GRAPH_H;
                     const smooth = (pts: [number, number][]) => {
@@ -488,7 +551,7 @@ export default function Home() {
                   }
 
                   return (
-                    <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 40 }}>
+                    <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 90 }}>
                       {graphEl}
                       <div className="absolute bg-gray-800" style={{ top: AXIS_Y, left: firstCx - ITEM_W / 2, right: 20, height: 1 }} />
                       {sorted.map((r, i) => {
@@ -496,8 +559,8 @@ export default function Home() {
                         const isHovered = hoveredReleaseId === r.id;
                         return (
                           <div key={r.id} className="absolute cursor-default"
-                            style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 40 }}
-                            onMouseEnter={() => setHoveredReleaseId(r.id)}
+                            style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 50 }}
+                            onMouseEnter={() => { setHoveredReleaseId(r.id); setHoveredSummaryId(null); }}
                             onMouseLeave={() => setHoveredReleaseId(null)}>
                             <div className="absolute bg-gray-700" style={{ left: "50%", top: AXIS_Y - 10, width: 1, height: 11 }} />
                             <div className={`absolute rounded-full border-2 border-[#030712] transition-colors ${isHovered ? "bg-teal-400" : "bg-teal-600"}`}
@@ -506,6 +569,30 @@ export default function Home() {
                               <p className="text-xs font-medium text-gray-400 truncate px-2">{r.name}</p>
                               <p className="text-xs text-gray-700 mt-0.5">{r.date}</p>
                             </div>
+                          </div>
+                        );
+                      })}
+                      {/* Summary spans */}
+                      {summaries.map(s => {
+                        const x1 = Math.max(firstCx - ITEM_W / 2, dateToX(s.start_date));
+                        const x2 = Math.min(lastCx + ITEM_W / 2, dateToX(s.end_date));
+                        if (x2 - x1 < 4) return null;
+                        const isHov = hoveredSummaryId === s.id;
+                        const color = isHov ? "#2dd4bf" : "#0f766e";
+                        return (
+                          <div key={s.id} className="absolute"
+                            style={{ left: x1, top: SPAN_Y - 4, width: x2 - x1, height: SPAN_H + 8, cursor: "pointer", zIndex: 5 }}
+                            onMouseEnter={() => { setHoveredSummaryId(s.id); setHoveredReleaseId(null); }}
+                            onMouseLeave={() => setHoveredSummaryId(null)}>
+                            <div className="absolute" style={{
+                              left: 0, top: 4, right: 0, height: SPAN_H,
+                              borderTop: `1px solid ${color}`,
+                              borderBottom: `1px solid ${color}`,
+                              borderLeft: `2px solid ${color}`,
+                              borderRight: `2px solid ${color}`,
+                              borderRadius: 2,
+                              background: isHov ? "rgba(45,212,191,0.08)" : "rgba(15,118,110,0.06)",
+                            }} />
                           </div>
                         );
                       })}
@@ -518,8 +605,88 @@ export default function Home() {
 
           {/* Info panel */}
           {selectedProduct && !loadingReleases && releases.length > 0 && (
-            <div className="max-w-2xl mx-auto px-8 pt-5 pb-16" style={{ minHeight: 80 }}>
+            <div className="max-w-4xl mx-auto px-8 pt-6 pb-16" style={{ minHeight: 100 }}>
               {(() => {
+                // Summary hover → two-column layout
+                if (hoveredSummaryId) {
+                  const s = summaries.find(x => x.id === hoveredSummaryId);
+                  if (!s) return null;
+                  const fbInSpan = feedback.filter(f => f.date >= s.start_date && f.date <= s.end_date);
+                  const relInSpan = [...releases].reverse().filter(r => r.date >= s.start_date && r.date <= s.end_date);
+                  const sourceCounts: Record<string, number> = {};
+                  fbInSpan.forEach(f => { sourceCounts[f.source_type] = (sourceCounts[f.source_type] || 0) + 1; });
+                  const pos = fbInSpan.filter(f => f.score >= 6).length;
+                  const neu = fbInSpan.filter(f => f.score >= 4 && f.score < 6).length;
+                  const neg = fbInSpan.filter(f => f.score < 4).length;
+                  const avg = fbInSpan.length ? (fbInSpan.reduce((sum, f) => sum + f.score, 0) / fbInSpan.length).toFixed(1) : "—";
+                  let highlights: { raw_text: string; source_type: string; score: number; date: string }[] = [];
+                  try { highlights = s.highlights.map(h => JSON.parse(h)); } catch { /* */ }
+                  const showAll = expandedSummaryId === s.id;
+                  const displayed = showAll ? highlights : highlights.slice(0, 5);
+
+                  return (
+                    <div className="grid grid-cols-5 gap-8">
+                      {/* Left: release(s) */}
+                      <div className="col-span-2">
+                        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">Release</p>
+                        <p className="text-xs text-gray-600 mb-3">{s.start_date} → {s.end_date}</p>
+                        {relInSpan.length > 0 ? relInSpan.map(r => (
+                          <div key={r.id} className="mb-4">
+                            <p className="text-sm font-semibold text-white mb-0.5">{r.name}</p>
+                            <p className="text-xs text-teal-500 mb-1.5">{r.date}</p>
+                            <p className="text-sm text-gray-400 leading-relaxed">{r.summary}</p>
+                          </div>
+                        )) : <p className="text-sm text-gray-600">No releases in this period.</p>}
+                      </div>
+
+                      {/* Right: feedback summary */}
+                      <div className="col-span-3">
+                        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">Feedback</p>
+
+                        {/* Pie + source breakdown */}
+                        <div className="flex items-start gap-3 mb-4">
+                          <SimplePie counts={sourceCounts} />
+                          <div className="flex flex-col gap-1 pt-1">
+                            {Object.entries(sourceCounts).map(([type, count]) => (
+                              <span key={type} className="flex items-center gap-1.5 text-xs text-gray-500">
+                                <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ background: SOURCE_COLORS[type] ?? "#6b7280" }} />
+                                {type} ({count})
+                              </span>
+                            ))}
+                          </div>
+                          {/* Sentiment stats */}
+                          <div className="ml-auto flex flex-col gap-1 text-xs text-right">
+                            <span className="text-gray-500">avg <span className="text-white font-medium">{avg}/10</span></span>
+                            <span className="text-teal-400">{pos} positive</span>
+                            <span className="text-gray-400">{neu} neutral</span>
+                            <span className="text-red-400">{neg} negative</span>
+                          </div>
+                        </div>
+
+                        {/* Agent summary */}
+                        <p className="text-sm text-gray-300 leading-relaxed mb-4 border-l-2 border-gray-800 pl-3">{s.summary}</p>
+
+                        {/* Highlights */}
+                        <div className="space-y-3">
+                          {displayed.map((h, i) => (
+                            <div key={i} className="border-l-2 border-gray-800 pl-3">
+                              <p className="text-xs text-gray-400 leading-relaxed">&ldquo;{h.raw_text}&rdquo;</p>
+                              <p className="text-xs text-gray-600 mt-0.5">{h.source_type} · {h.date} · {h.score}/10</p>
+                            </div>
+                          ))}
+                        </div>
+                        {highlights.length > 5 && (
+                          <button className="text-xs text-teal-500 hover:text-teal-300 mt-3 transition-colors"
+                            onClick={() => setExpandedSummaryId(e => e === s.id ? null : s.id)}>
+                            {showAll ? "Show less ↑" : `Show all ${highlights.length} pieces ↓`}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Release hover → single column
                 const hovered = releases.find(r => r.id === hoveredReleaseId);
                 return hovered ? (
                   <div>
@@ -528,7 +695,7 @@ export default function Home() {
                     <p className="text-sm text-gray-400 leading-relaxed">{hovered.summary}</p>
                   </div>
                 ) : (
-                  <p className="text-xs text-gray-700 pt-1">Hover a release to see details.</p>
+                  <p className="text-xs text-gray-700 pt-1">Hover a release or time span to see details.</p>
                 );
               })()}
             </div>

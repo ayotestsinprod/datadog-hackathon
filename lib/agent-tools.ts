@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct, updateProduct } from "./db";
+import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct, updateProduct, getFeedbackSummariesForProduct, getFeedbackInRange, insertFeedbackSummary } from "./db";
 import { nimbleSearch, type SearchDepth } from "./nimble";
 
 const allTools: Anthropic.Tool[] = [
@@ -95,6 +95,59 @@ const allTools: Anthropic.Tool[] = [
   },
 ];
 
+export const summarizeToolDefs: Anthropic.Tool[] = [
+  {
+    name: "get_existing_summaries",
+    description: "Get all existing feedback summaries for a product. Returns their date ranges so you know what time periods are already covered.",
+    input_schema: {
+      type: "object" as const,
+      properties: { product_id: { type: "string" } },
+      required: ["product_id"],
+    },
+  },
+  {
+    name: "get_feedback_in_range",
+    description: "Get feedback items for a product within a date range (YYYY-MM-DD). Returns up to 200 items with date, score, source_type, and raw_text.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        product_id: { type: "string" },
+        start_date: { type: "string", description: "YYYY-MM-DD" },
+        end_date: { type: "string", description: "YYYY-MM-DD" },
+      },
+      required: ["product_id", "start_date", "end_date"],
+    },
+  },
+  {
+    name: "insert_feedback_summary",
+    description: "Insert a qualitative summary for a time span of feedback. Include 5–10 representative highlight quotes.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        product_id: { type: "string" },
+        start_date: { type: "string", description: "YYYY-MM-DD" },
+        end_date: { type: "string", description: "YYYY-MM-DD" },
+        summary: { type: "string", description: "2-4 sentence qualitative narrative of what users felt during this period and why." },
+        highlights: {
+          type: "array",
+          description: "5–10 feedback quotes that best represent the overall sentiment of this period.",
+          items: {
+            type: "object",
+            properties: {
+              raw_text: { type: "string" },
+              source_type: { type: "string" },
+              score: { type: "number" },
+              date: { type: "string" },
+            },
+            required: ["raw_text", "source_type", "score", "date"],
+          },
+        },
+      },
+      required: ["product_id", "start_date", "end_date", "summary", "highlights"],
+    },
+  },
+];
+
 /** Full tool set for ingest-style agents */
 export const tools = allTools;
 
@@ -106,6 +159,8 @@ export const initializeTools = allTools.filter((t) =>
 export const refreshTools = allTools.filter((t) =>
   ["search_releases", "fetch_url", "nimble_search", "insert_release"].includes(t.name)
 );
+
+export const summarizeTools = summarizeToolDefs;
 
 export async function executeTool(
   toolName: string,
@@ -191,6 +246,35 @@ export async function executeTool(
     } catch (err) {
       return JSON.stringify({ error: (err as Error).message });
     }
+  }
+
+  if (toolName === "get_existing_summaries") {
+    const summaries = await getFeedbackSummariesForProduct(input.product_id as string);
+    return JSON.stringify(summaries.map(s => ({ id: s.id, start_date: s.start_date, end_date: s.end_date })));
+  }
+
+  if (toolName === "get_feedback_in_range") {
+    const fb = await getFeedbackInRange(input.product_id as string, input.start_date as string, input.end_date as string);
+    return JSON.stringify(fb.map(f => ({
+      id: f.id,
+      date: f.date,
+      score: f.score,
+      source_type: f.source_type,
+      raw_text: (f.raw_text ?? "").slice(0, 250),
+    })));
+  }
+
+  if (toolName === "insert_feedback_summary") {
+    const highlights = (input.highlights as Array<{ raw_text: string; source_type: string; score: number; date: string }>)
+      .map(h => JSON.stringify(h));
+    const id = await insertFeedbackSummary({
+      product_id: input.product_id as string,
+      start_date: input.start_date as string,
+      end_date: input.end_date as string,
+      summary: input.summary as string,
+      highlights,
+    });
+    return JSON.stringify({ id });
   }
 
   return JSON.stringify({ error: `Unknown tool: ${toolName}` });
