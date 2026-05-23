@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { refreshTools, executeTool } from "./tools";
+import { refreshTools, executeTool } from "../../../lib/agent-tools";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const systemPrompt = readFileSync(join(process.cwd(), "prompts/refresh.txt"), "utf-8");

@@ -9,7 +9,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === "POST") {
     const { name, description = "", links = [] } = req.body;
     if (!name) return res.status(400).json({ error: "name is required" });
-    const id = await insertProduct({ name, description, links });
+    const id = await insertProduct({ name, description, links, favicon_url: "" });
     return res.status(201).json({ id });
   }
   res.status(405).end();

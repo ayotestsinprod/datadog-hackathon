@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct, updateProduct } from "../../../lib/db";
-import { nimbleSearch, type SearchDepth } from "../../../lib/nimble";
+import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct, updateProduct } from "./db";
+import { nimbleSearch, type SearchDepth } from "./nimble";
 
 const allTools: Anthropic.Tool[] = [
   {
@@ -94,6 +94,9 @@ const allTools: Anthropic.Tool[] = [
     },
   },
 ];
+
+/** Full tool set for ingest-style agents */
+export const tools = allTools;
 
 // Scoped tool sets per agent
 export const initializeTools = allTools.filter((t) =>
