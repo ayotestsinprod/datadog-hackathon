@@ -70,7 +70,7 @@ export async function insertProduct(p: Omit<Product, "id">): Promise<string> {
 }
 
 export async function deleteProduct(id: string): Promise<void> {
-  const tables = ["products", "releases", "release_feedback", "agent_passes", "action_outputs"];
+  const tables = ["products", "releases", "release_feedback", "feedback_summaries", "agent_passes", "action_outputs"];
   const col = (t: string) => t === "products" ? "id" : "product_id";
   await Promise.all(
     tables.map((table) =>
