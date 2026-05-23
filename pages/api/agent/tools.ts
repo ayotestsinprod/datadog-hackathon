@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { insertProduct, insertRelease, updateProduct, searchProductsByName, getReleasesForProduct } from "../../../lib/db";
+import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct } from "../../../lib/db";
+import { nimbleSearch, type SearchDepth } from "../../../lib/nimble";
 
 const allTools: Anthropic.Tool[] = [
   {
@@ -60,6 +61,22 @@ const allTools: Anthropic.Tool[] = [
         url: { type: "string" },
       },
       required: ["url"],
+    },
+  },
+  {
+    name: "nimble_search",
+    description: "Search the live web via Nimble for up-to-date information about a product, model, or topic. Returns ranked results with title, description, URL, and (for 'fast' depth) ~2K chars of page content. Use this to discover authoritative release pages, official changelogs, and recent news. Prefer 'fast' when you need content snippets; 'lite' when you just need a list of URLs.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string", description: "Search query, e.g. 'Claude Opus 4.7 release notes'" },
+        max_results: { type: "integer", description: "Number of results to return (1-20). Default 5." },
+        search_depth: { type: "string", enum: ["lite", "fast"], description: "'lite' = titles/descriptions only; 'fast' = adds page content. Default 'fast'." },
+        time_range: { type: "string", enum: ["hour", "day", "week", "month", "year"], description: "Restrict results by recency." },
+        include_domains: { type: "array", items: { type: "string" }, description: "Whitelist of domains." },
+        exclude_domains: { type: "array", items: { type: "string" }, description: "Blacklist of domains." },
+      },
+      required: ["query"],
     },
   },
   {
@@ -147,6 +164,30 @@ export async function executeTool(
       summary: input.summary as string,
     });
     return JSON.stringify({ id });
+  }
+
+  if (toolName === "nimble_search") {
+    try {
+      const result = await nimbleSearch({
+        query: input.query as string,
+        max_results: (input.max_results as number) ?? 5,
+        search_depth: ((input.search_depth as SearchDepth) ?? "fast"),
+        time_range: input.time_range as "hour" | "day" | "week" | "month" | "year" | undefined,
+        include_domains: input.include_domains as string[] | undefined,
+        exclude_domains: input.exclude_domains as string[] | undefined,
+      });
+      return JSON.stringify({
+        total_results: result.total_results,
+        results: result.results.map((r) => ({
+          title: r.title,
+          description: r.description,
+          url: r.url,
+          content: r.content,
+        })),
+      });
+    } catch (err) {
+      return JSON.stringify({ error: (err as Error).message });
+    }
   }
 
   return JSON.stringify({ error: `Unknown tool: ${toolName}` });
