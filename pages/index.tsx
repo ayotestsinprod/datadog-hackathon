@@ -26,6 +26,7 @@ export default function Home() {
   const [releases, setReleases] = useState<Release[]>([]);
   const [loadingReleases, setLoadingReleases] = useState(false);
   const [loadingIngest, setLoadingIngest] = useState(false);
+  const [streamLog, setStreamLog] = useState<string[]>([]);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -65,43 +66,68 @@ export default function Home() {
     await loadReleases(p.id);
   }
 
-  async function handleRefresh() {
-    if (!selectedProduct) return;
+  async function runIngest(body: object, onDone: (product_id: string) => Promise<void>) {
     setLoadingIngest(true);
-    await fetch("/api/agent/ingest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: selectedProduct.name,
-        description: selectedProduct.description,
-        links: selectedProduct.links,
-      }),
-    });
-    setLoadingIngest(false);
-    await loadReleases(selectedProduct.id);
-  }
+    setStreamLog([]);
 
-  async function handleCreate() {
-    setLoadingIngest(true);
-    const links = newLinks.split("\n").map((l) => l.trim()).filter(Boolean);
     const res = await fetch("/api/agent/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: query, description: newDesc, links }),
+      body: JSON.stringify(body),
     });
-    const data = await res.json();
 
-    const productsRes = await fetch("/api/products");
-    const updated: Product[] = await productsRes.json();
-    setProducts(updated);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
 
-    const created = updated.find((p) => p.id === data.product_id);
-    if (created) {
-      setSelectedProduct(created);
-      setIsNew(false);
-      await loadReleases(created.id);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const event = JSON.parse(line.slice(6));
+        if (event.type === "tool_call") {
+          setStreamLog((l) => [...l, `→ ${event.name}`]);
+        } else if (event.type === "release_inserted") {
+          setStreamLog((l) => [...l, `  ✓ ${event.name}`]);
+        } else if (event.type === "done") {
+          await onDone(event.product_id);
+        }
+      }
     }
+
     setLoadingIngest(false);
+  }
+
+  async function handleRefresh() {
+    if (!selectedProduct) return;
+    await runIngest(
+      { name: selectedProduct.name, description: selectedProduct.description, links: selectedProduct.links },
+      async (product_id) => {
+        await loadReleases(product_id ?? selectedProduct.id);
+      }
+    );
+  }
+
+  async function handleCreate() {
+    const links = newLinks.split("\n").map((l) => l.trim()).filter(Boolean);
+    await runIngest(
+      { name: query, description: newDesc, links },
+      async (product_id) => {
+        const productsRes = await fetch("/api/products");
+        const updated: Product[] = await productsRes.json();
+        setProducts(updated);
+        const created = updated.find((p) => p.id === product_id);
+        if (created) {
+          setSelectedProduct(created);
+          setIsNew(false);
+          await loadReleases(created.id);
+        }
+      }
+    );
   }
 
   return (
@@ -241,6 +267,16 @@ export default function Home() {
                 {loadingIngest ? "Refreshing…" : "↻ Refresh"}
               </button>
             </div>
+            {loadingIngest && streamLog.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-800">
+                <div className="space-y-1 font-mono">
+                  {streamLog.map((line, i) => (
+                    <p key={i} className="text-xs text-gray-500">{line}</p>
+                  ))}
+                  <p className="text-xs text-gray-600 animate-pulse">…</p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
