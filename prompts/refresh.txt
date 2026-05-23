@@ -7,13 +7,17 @@ Follow these steps in order. Do not skip any step.
 STEP 1 — CHECK EXISTING RELEASES
 Call search_releases with the product ID. Note every release name already stored — you will not insert these again.
 
-STEP 2 — FETCH THE OFFICIAL RELEASES PAGE
-From the provided links, identify the best URL for releases or a changelog (e.g. a GitHub /releases page, an official changelog). Call fetch_url on it to get current release data. If that URL fails or returns unhelpful content, try one alternative you know of.
+STEP 2 — ATTEMPT TO FETCH THE OFFICIAL RELEASES PAGE
+From the provided links or your knowledge of the product, identify the best URL for a changelog or releases list.
+Call fetch_url on it. Evaluate the result:
+- If you get a "Page not found", empty body, or pure JavaScript with no readable release content, the page is likely JS-rendered and cannot be scraped. Try one alternative URL (e.g. a GitHub releases page, a different changelog path).
+- If both attempts return no useful content, proceed to step 3 using your training knowledge instead.
 
 STEP 3 — INSERT NEW RELEASES ONLY
-Compare what you found against existing releases from step 1.
+Using either the scraped content OR your training knowledge of the product, identify all significant public releases.
+Compare against existing releases from step 1.
 For each release NOT already in the database, call insert_release.
-Insert in chronological order (oldest first). Include all significant releases — major, minor, and notable patches.
-Use YYYY-MM-DD for dates. If the exact date is uncertain, use your best estimate.
+Insert in chronological order (oldest first). Include major and minor releases.
+Use YYYY-MM-DD for dates. Estimate if the exact date is uncertain.
 
-Do not insert duplicates. Always complete all three steps.
+IMPORTANT: You MUST call insert_release at least once if you know of any releases for this product. Do not stop after failed scraping — always fall back to your training knowledge.
