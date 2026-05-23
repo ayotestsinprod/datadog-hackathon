@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct } from "../../../lib/db";
+import { insertProduct, insertRelease, updateProduct, searchProductsByName, getReleasesForProduct } from "../../../lib/db";
 
 export const tools: Anthropic.Tool[] = [
   {
@@ -33,6 +33,19 @@ export const tools: Anthropic.Tool[] = [
       type: "object" as const,
       properties: {
         product_id: { type: "string", description: "The product ID to fetch releases for" },
+      },
+      required: ["product_id"],
+    },
+  },
+  {
+    name: "update_product",
+    description: "Update the description and/or known links for an existing product. Use this when the product was created without a description or links.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        product_id: { type: "string" },
+        description: { type: "string", description: "A concise 1-2 sentence description of the product" },
+        links: { type: "array", items: { type: "string" }, description: "Official URLs: homepage, changelog, GitHub releases, etc." },
       },
       required: ["product_id"],
     },
@@ -80,6 +93,14 @@ export async function executeTool(
       links: (input.links as string[]) ?? [],
     });
     return JSON.stringify({ id });
+  }
+
+  if (toolName === "update_product") {
+    await updateProduct(input.product_id as string, {
+      description: input.description as string | undefined,
+      links: input.links as string[] | undefined,
+    });
+    return JSON.stringify({ ok: true });
   }
 
   if (toolName === "search_releases") {

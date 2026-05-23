@@ -308,6 +308,7 @@ export default function Home() {
               >
                 {(() => {
                   const ITEM_W = 140;
+                  const TOOLTIP_W = 220;
                   const AXIS_Y = 170;
                   const totalWidth = Math.max(releases.length * ITEM_W + 60, 500);
                   return (
@@ -317,6 +318,9 @@ export default function Home() {
                       {releases.map((r, i) => {
                         const cx = 20 + i * ITEM_W + ITEM_W / 2;
                         const isHovered = hoveredReleaseId === r.id;
+                        // Clamp tooltip so it never overflows the scroll container
+                        const rawLeft = cx - TOOLTIP_W / 2;
+                        const tooltipLeft = Math.max(4, Math.min(rawLeft, totalWidth - TOOLTIP_W - 4));
                         return (
                           <div
                             key={r.id}
@@ -325,11 +329,11 @@ export default function Home() {
                             onMouseEnter={() => setHoveredReleaseId(r.id)}
                             onMouseLeave={() => setHoveredReleaseId(null)}
                           >
-                            {/* Tooltip above axis — anchored to top of container */}
+                            {/* Tooltip — clamped to stay within scroll bounds, max height to prevent vertical overflow */}
                             {isHovered && (
                               <div
-                                className="absolute z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl"
-                                style={{ top: 4, left: "50%", transform: "translateX(-50%)", width: 200 }}
+                                className="absolute z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl overflow-y-auto"
+                                style={{ top: 4, left: tooltipLeft - (cx - ITEM_W / 2), width: TOOLTIP_W, maxHeight: AXIS_Y - 16 }}
                               >
                                 <p className="text-xs font-semibold text-white mb-1">{r.name}</p>
                                 <p className="text-xs text-gray-400 mb-2">{r.date}</p>
