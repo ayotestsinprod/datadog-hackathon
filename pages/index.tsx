@@ -270,12 +270,9 @@ export default function Home() {
             </div>
             {loadingIngest && streamLog.length > 0 && (
               <div className="mt-4 pt-4 border-t border-gray-800">
-                <div className="space-y-1 font-mono">
-                  {streamLog.map((line, i) => (
-                    <p key={i} className="text-xs text-gray-500">{line}</p>
-                  ))}
-                  <p className="text-xs text-gray-600 animate-pulse">…</p>
-                </div>
+                <p className="text-xs text-gray-500 font-mono animate-pulse">
+                  {streamLog[streamLog.length - 1] ?? "…"}
+                </p>
               </div>
             )}
           </div>
