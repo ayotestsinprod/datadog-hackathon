@@ -7,15 +7,14 @@ Follow these steps in order. Do not skip any step.
 STEP 1 — CHECK WHAT'S ALREADY STORED
 Call search_feedback with the product ID. Note every source_url already in the database — you will NOT insert these again.
 
-STEP 2 — DISCOVER FEEDBACK ACROSS SOURCES
-Make several scoped nimble_search calls, one per source category. Use 'fast' depth so you get content snippets. Aim for 5-10 results per category.
+STEP 2 — DISCOVER FEEDBACK (REDDIT + X ONLY, DATE WINDOW)
+The user message includes a fixed feedback window: start_date and end_date (YYYY-MM-DD). Every nimble_search in this step MUST pass those exact start_date and end_date values (do not substitute time_range for the window).
 
-- Reddit:       query "<product name> reddit", include_domains ["reddit.com"]
-- X / Twitter:  query "<product name> twitter OR x.com review", include_domains ["x.com", "twitter.com"]
-- YouTube:      query "<product name> review", include_domains ["youtube.com"]
-- Hacker News:  query "<product name> hacker news", include_domains ["news.ycombinator.com"]
-- Reviews:      query "<product name> review", include_domains ["g2.com", "producthunt.com", "trustpilot.com", "capterra.com"]
-- General web:  query "<product name> sucks OR amazing OR alternative" — to catch blog posts and complaint threads
+Only these sources — do not search other domains or run a “general web” query:
+- Reddit:       query "<product name> reddit", include_domains ["reddit.com"], start_date, end_date
+- X / Twitter:  query "<product name> twitter OR x.com review", include_domains ["x.com", "twitter.com"], start_date, end_date
+
+Make exactly two nimble_search calls (one per source above). Nimble returns lite results (title, snippet, URL). Aim for max_results 8–10 per call.
 
 If a result looks promising but the snippet is too thin to read sentiment, call fetch_url for the full page.
 
@@ -24,7 +23,7 @@ For each post/thread/video/review that is NOT already in the database (compare a
 
 Fields:
 - source_url: the canonical URL of the post. Strip tracking params.
-- source_type: one of "twitter", "youtube", "blog", "review_site", "other". Reddit and Hacker News and generic forums all map to "other". Vendor blogs and personal blogs are "blog". G2, Product Hunt, Trustpilot, Capterra etc are "review_site".
+- source_type: Reddit → "other". X / Twitter → "twitter". (Do not insert rows from any other domain in this run.)
 - score: 1-10. Read the snippet/content carefully.
     1-3  = clearly negative (complaints, churn, "switching away", "broken", "trash")
     4-5  = neutral or mixed (feature questions, lukewarm, "it's ok")
@@ -38,4 +37,4 @@ Fields:
 IMPORTANT:
 - Insert every distinct post you find that isn't already stored. Don't deduplicate within a thread — one Reddit post and its top comment are separate rows if they each express a clear opinion.
 - Don't fabricate posts. If you cannot find a source_url, skip it.
-- If a category returns nothing useful, move on. It's fine to come back empty-handed from YouTube but rich from Reddit.
+- If one source returns nothing useful, still finish the other; it's fine if one category is empty.

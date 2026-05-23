@@ -1,6 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct, updateProduct, getFeedbackSummariesForProduct, getFeedbackInRange, insertFeedbackSummary } from "./db";
-import { nimbleSearch, type SearchDepth } from "./nimble";
+import {
+  insertProduct,
+  insertRelease,
+  insertFeedback,
+  searchProductsByName,
+  getReleasesForProduct,
+  getFeedbackForProduct,
+  updateProduct,
+  getFeedbackSummariesForProduct,
+  getFeedbackInRange,
+  insertFeedbackSummary,
+} from "./db";
+import { nimbleSearch } from "./nimble";
 
 type FeedbackSourceType = "twitter" | "youtube" | "blog" | "review_site" | "other";
 
@@ -67,14 +78,16 @@ const allTools: Anthropic.Tool[] = [
   },
   {
     name: "nimble_search",
-    description: "Search the live web via Nimble for up-to-date information about a product, model, or topic. Returns ranked results with title, description, URL, and (for 'fast' depth) ~2K chars of page content. Use this to discover authoritative release pages, official changelogs, and recent news. Prefer 'fast' when you need content snippets; 'lite' when you just need a list of URLs.",
+    description:
+      "Search the live web via Nimble for up-to-date information about a product, model, or topic. Returns ranked results with title, short description, and URL (lite search — no full page body). Use fetch_url on promising URLs when you need the full page text for releases, sentiment, or metadata.",
     input_schema: {
       type: "object" as const,
       properties: {
         query: { type: "string", description: "Search query, e.g. 'Claude Opus 4.7 release notes'" },
         max_results: { type: "integer", description: "Number of results to return (1-20). Default 5." },
-        search_depth: { type: "string", enum: ["lite", "fast"], description: "'lite' = titles/descriptions only; 'fast' = adds page content. Default 'fast'." },
-        time_range: { type: "string", enum: ["hour", "day", "week", "month", "year"], description: "Restrict results by recency." },
+        time_range: { type: "string", enum: ["hour", "day", "week", "month", "year"], description: "Restrict results by recency (coarse). Prefer start_date/end_date for an exact window." },
+        start_date: { type: "string", description: "YYYY-MM-DD — include results on or after this date." },
+        end_date: { type: "string", description: "YYYY-MM-DD — include results on or before this date." },
         include_domains: { type: "array", items: { type: "string" }, description: "Whitelist of domains." },
         exclude_domains: { type: "array", items: { type: "string" }, description: "Blacklist of domains." },
       },
@@ -194,6 +207,11 @@ export const refreshTools = allTools.filter((t) =>
   ["search_releases", "fetch_url", "nimble_search", "insert_release"].includes(t.name)
 );
 
+/** Tools for discovering public feedback via Nimble and writing `release_feedback` */
+export const feedbackTools = allTools.filter((t) =>
+  ["search_feedback", "nimble_search", "fetch_url", "insert_feedback"].includes(t.name)
+);
+
 export const summarizeTools = summarizeToolDefs;
 
 export async function executeTool(
@@ -289,8 +307,9 @@ export async function executeTool(
       const result = await nimbleSearch({
         query: input.query as string,
         max_results: (input.max_results as number) ?? 5,
-        search_depth: ((input.search_depth as SearchDepth) ?? "fast"),
         time_range: input.time_range as "hour" | "day" | "week" | "month" | "year" | undefined,
+        start_date: input.start_date as string | undefined,
+        end_date: input.end_date as string | undefined,
         include_domains: input.include_domains as string[] | undefined,
         exclude_domains: input.exclude_domains as string[] | undefined,
       });

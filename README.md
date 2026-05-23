@@ -60,9 +60,13 @@ Frontend (Vercel / TypeScript)
 
 ### Flow 1 — Ingest
 1. User creates a product via the UI.
-2. Ingestion Agent runs (on-demand or scheduled), using Nimbly to scrape entry-point URLs and related public sources.
-3. Agent writes discovered releases to `releases` and individual feedback items (with scores) to `release_feedback`.
-4. Pass is logged to `agent_passes`.
+2. **Initialize** agent enriches metadata (links, description) using `nimble_search` and `fetch_url`.
+3. **Refresh** agent discovers releases via Nimble and writes `releases`.
+4. **Feedback** agent searches the web via Nimble (currently **Reddit + X/Twitter only**, rolling **last 3 months** in UTC), scores sentiment, and writes rows to `release_feedback`.
+5. **Summarize** agent reads `release_feedback`, merges gaps with release dates, and writes `feedback_summaries`.
+6. Each pass is logged to `agent_passes`.
+
+On an existing product, use the ··· menu: **Refresh releases**, **Fetch public feedback**, and **Refresh analysis** to run those steps independently.
 
 ### Flow 2 — Analyze
 1. Analysis Agent reads new `release_feedback` rows since its last pass.
@@ -80,7 +84,7 @@ Frontend (Vercel / TypeScript)
 
 | Layer | Technology |
 |---|---|
-| Web scraping | Nimbly |
+| Web scraping | Nimble Search (lite depth; use `fetch_url` for full pages) |
 | Data storage | ClickHouse |
 | Publishing / notifications | Senso / cited.md |
 | Frontend | TypeScript, Next.js |

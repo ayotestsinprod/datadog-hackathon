@@ -220,6 +220,11 @@ export default function Home() {
         if (event.type === "tool_error") appendStreamLog(`! ${event.name}: ${event.output_preview ?? "tool failed"}`);
         if (event.type === "audit_error") appendStreamLog(`! audit log failed: ${event.message ?? "unknown error"}`);
         if (event.type === "release_inserted") appendStreamLog(`✓ ${event.name}`);
+        if (event.type === "feedback_inserted") {
+          const st = typeof event.source_type === "string" ? event.source_type : "?";
+          const sc = typeof event.score === "number" ? event.score : "?";
+          appendStreamLog(`+ feedback (${st}, ${sc}/10)`);
+        }
         if (event.type === "summary_inserted") appendStreamLog(`✓ summary ${event.start_date} → ${event.end_date}`);
         if (event.type === "done") {
           const failures = typeof event.tool_failures === "number" ? event.tool_failures : 0;
@@ -230,7 +235,6 @@ export default function Home() {
           appendStreamLog(`! ${message}`);
           throw new Error(message);
         }
-        onEvent?.(event);
       }
     }
   }
@@ -286,6 +290,27 @@ export default function Home() {
     }
   }
 
+  async function handleFetchFeedback() {
+    if (!selectedProduct) return;
+    if (selectedProduct.id === "9a6188ba-eda0-45e0-a6f0-507fecbfed0a") {
+      setShowMenu(false);
+      return;
+    }
+    setShowMenu(false);
+    setLoadingIngest(true);
+    setStreamLog([]);
+    const p = selectedProduct;
+    const agentBody = { product_id: p.id, name: p.name, description: p.description, links: p.links };
+    try {
+      await streamAgent("/api/agent/feedback", agentBody);
+      await loadReleases(p.id);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingIngest(false);
+    }
+  }
+
   async function handleCreate() {
     const links = newLinks.split("\n").map((l) => l.trim()).filter(Boolean);
 
@@ -309,7 +334,10 @@ export default function Home() {
       // Run agents sequentially: populate metadata, fetch releases, then summarize feedback
       await streamAgent("/api/agent/initialize", agentBody);
       await streamAgent("/api/agent/refresh", agentBody);
-      await streamAgent("/api/agent/summarize", { product_id, name: query });
+      await streamAgent("/api/agent/feedback", agentBody);
+      const relRes = await fetch(`/api/releases?product_id=${product_id}`);
+      const releasesForSummary = await relRes.json();
+      await streamAgent("/api/agent/summarize", { product_id, name: query, releases: releasesForSummary });
 
       // Re-fetch product to get populated description/links/favicon
       const updated: Product[] = await fetch("/api/products").then((r) => r.json());
@@ -342,11 +370,16 @@ export default function Home() {
     const lastTsC = new Date(sortedForActive[sortedForActive.length - 1].date).getTime();
     const spanC = lastTsC - firstTsC || 1;
     let minDist = Infinity;
+    let closest: Release = sortedForActive[0];
     sortedForActive.forEach((r, i) => {
       const rcx = TIMELINE_LEFT_PAD + 20 + i * ITEM_W_C + ITEM_W_C / 2;
       const dist = Math.abs(rcx - centerX);
-      if (dist < minDist) { minDist = dist; activeRelease = r; }
+      if (dist < minDist) {
+        minDist = dist;
+        closest = r;
+      }
     });
+    activeRelease = closest;
     const centerTs = firstTsC + ((centerX - firstCxC) / Math.max(lastCxC - firstCxC, 1)) * spanC;
     const clampedTs = Math.max(firstTsC, Math.min(lastTsC, centerTs));
     const centerDate = new Date(clampedTs).toISOString().slice(0, 10);
@@ -524,6 +557,13 @@ export default function Home() {
                       <div className="absolute right-0 top-full mt-1 w-52 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
                         <button className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2" onClick={handleRefresh}>
                           <span>↻</span> Refresh releases
+                        </button>
+                        <button
+                          type="button"
+                          title="Reddit and X only, rolling last 3 months (UTC)"
+                          className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2 border-t border-gray-800"
+                          onClick={handleFetchFeedback}>
+                          <span>◎</span> Fetch public feedback
                         </button>
                         <button className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2 border-t border-gray-800" onClick={handleSummarize}>
                           <span>✦</span> Refresh analysis

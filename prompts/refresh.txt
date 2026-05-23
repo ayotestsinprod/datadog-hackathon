@@ -8,7 +8,7 @@ STEP 1 — CHECK EXISTING RELEASES
 Call search_releases with the product ID. Note every release name already stored — you will not insert these again.
 
 STEP 2 — DISCOVER RELEASES VIA NIMBLE
-Call nimble_search to find authoritative release information. Use 'fast' depth so you get content snippets, not just URLs.
+Call nimble_search to find authoritative release information. Search runs in lite mode (titles, blurbs, URLs only).
 - Start with a focused query like '<product name> release notes' or '<product name> changelog'.
 - If results are thin or irrelevant, try one alternative query (e.g. '<product name> latest version', '<product name> announcement <year>').
 - Prefer official sources (vendor blog, docs site, GitHub releases) over forums and review sites for facts about release names and dates.

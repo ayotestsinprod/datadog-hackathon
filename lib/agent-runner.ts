@@ -32,6 +32,7 @@ export interface RunAgentResult {
   status: AgentStatus;
   releasesInserted: number;
   summariesInserted: number;
+  feedbackInserted: number;
   rowsCreated: string[];
   toolFailures: number;
   durationMs: number;
@@ -92,6 +93,10 @@ function rowCreatedForTool(
     return `release:${result.id}`;
   }
 
+  if (toolName === "insert_feedback" && typeof result?.id === "string") {
+    return `release_feedback:${result.id}`;
+  }
+
   if (toolName === "insert_feedback_summary" && typeof result?.id === "string") {
     return `feedback_summary:${result.id}`;
   }
@@ -124,6 +129,7 @@ export async function runAgent({
   const rowsCreated: string[] = [];
   let releasesInserted = 0;
   let summariesInserted = 0;
+  let feedbackInserted = 0;
   let toolFailures = 0;
   let status: AgentStatus = "succeeded";
 
@@ -258,6 +264,16 @@ export async function runAgent({
           });
         }
 
+        if (ok && block.name === "insert_feedback") {
+          feedbackInserted++;
+          send({
+            type: "feedback_inserted",
+            run_id: runId,
+            source_type: input.source_type,
+            score: input.score,
+          });
+        }
+
         const toolEvent = {
           name: block.name,
           ok,
@@ -313,6 +329,7 @@ export async function runAgent({
     status,
     releasesInserted,
     summariesInserted,
+    feedbackInserted,
     rowsCreated,
     toolFailures,
     durationMs: Date.now() - startedAt,
