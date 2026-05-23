@@ -26,6 +26,8 @@ export default function Home() {
   const [releases, setReleases] = useState<Release[]>([]);
   const [loadingReleases, setLoadingReleases] = useState(false);
   const [loadingIngest, setLoadingIngest] = useState(false);
+  const [streamLog, setStreamLog] = useState<string[]>([]);
+  const [hoveredReleaseId, setHoveredReleaseId] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -65,43 +67,68 @@ export default function Home() {
     await loadReleases(p.id);
   }
 
-  async function handleRefresh() {
-    if (!selectedProduct) return;
+  async function runIngest(body: object, onDone: (product_id: string) => Promise<void>) {
     setLoadingIngest(true);
-    await fetch("/api/agent/ingest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: selectedProduct.name,
-        description: selectedProduct.description,
-        links: selectedProduct.links,
-      }),
-    });
-    setLoadingIngest(false);
-    await loadReleases(selectedProduct.id);
-  }
+    setStreamLog([]);
 
-  async function handleCreate() {
-    setLoadingIngest(true);
-    const links = newLinks.split("\n").map((l) => l.trim()).filter(Boolean);
     const res = await fetch("/api/agent/ingest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: query, description: newDesc, links }),
+      body: JSON.stringify(body),
     });
-    const data = await res.json();
 
-    const productsRes = await fetch("/api/products");
-    const updated: Product[] = await productsRes.json();
-    setProducts(updated);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
 
-    const created = updated.find((p) => p.id === data.product_id);
-    if (created) {
-      setSelectedProduct(created);
-      setIsNew(false);
-      await loadReleases(created.id);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const event = JSON.parse(line.slice(6));
+        if (event.type === "tool_call") {
+          setStreamLog((l) => [...l, `→ ${event.name}`]);
+        } else if (event.type === "release_inserted") {
+          setStreamLog((l) => [...l, `  ✓ ${event.name}`]);
+        } else if (event.type === "done") {
+          await onDone(event.product_id);
+        }
+      }
     }
+
     setLoadingIngest(false);
+  }
+
+  async function handleRefresh() {
+    if (!selectedProduct) return;
+    await runIngest(
+      { name: selectedProduct.name, description: selectedProduct.description, links: selectedProduct.links },
+      async (product_id) => {
+        await loadReleases(product_id ?? selectedProduct.id);
+      }
+    );
+  }
+
+  async function handleCreate() {
+    const links = newLinks.split("\n").map((l) => l.trim()).filter(Boolean);
+    await runIngest(
+      { name: query, description: newDesc, links },
+      async (product_id) => {
+        const productsRes = await fetch("/api/products");
+        const updated: Product[] = await productsRes.json();
+        setProducts(updated);
+        const created = updated.find((p) => p.id === product_id);
+        if (created) {
+          setSelectedProduct(created);
+          setIsNew(false);
+          await loadReleases(created.id);
+        }
+      }
+    );
   }
 
   return (
@@ -174,7 +201,10 @@ export default function Home() {
         {/* New product form */}
         {isNew && (
           <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 mb-6 space-y-4">
-            <h2 className="text-sm font-semibold text-gray-300">New product</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-300">New product: {query}</h2>
+              <span className="text-xs text-gray-500">description and links are optional</span>
+            </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Description</label>
               <textarea
@@ -182,17 +212,17 @@ export default function Home() {
                 rows={2}
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
-                placeholder="What is this product?"
+                placeholder="What is this product? (optional)"
               />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Links (one per line)</label>
               <textarea
                 className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 resize-none font-mono"
-                rows={3}
+                rows={2}
                 value={newLinks}
                 onChange={(e) => setNewLinks(e.target.value)}
-                placeholder="https://github.com/org/repo/releases"
+                placeholder="https://github.com/org/repo/releases (optional)"
               />
             </div>
             <button
@@ -200,7 +230,7 @@ export default function Home() {
               onClick={handleCreate}
               disabled={loadingIngest}
             >
-              {loadingIngest ? "Fetching releases…" : "Add & Fetch Releases"}
+              {loadingIngest ? "Fetching releases…" : "Fetch Releases"}
             </button>
           </div>
         )}
@@ -238,13 +268,20 @@ export default function Home() {
                 {loadingIngest ? "Refreshing…" : "↻ Refresh"}
               </button>
             </div>
+            {loadingIngest && streamLog.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-800">
+                <p className="text-xs text-gray-500 font-mono animate-pulse">
+                  {streamLog[streamLog.length - 1] ?? "…"}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
         {/* Timeline */}
         {(selectedProduct || loadingReleases) && (
           <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-6">
               Releases
             </p>
             {loadingReleases ? (
@@ -254,22 +291,58 @@ export default function Home() {
                 No releases yet — hit Refresh to fetch them.
               </p>
             ) : (
-              <div className="relative">
-                <div className="absolute left-[7px] top-2 bottom-2 w-px bg-gray-800" />
-                <div className="space-y-6">
-                  {releases.map((r) => (
-                    <div key={r.id} className="flex gap-4 pl-6 relative">
-                      <div className="absolute left-0 top-1.5 w-3.5 h-3.5 rounded-full bg-blue-500 border-2 border-gray-950 shrink-0" />
-                      <div className="flex-1 min-w-0 pb-2">
-                        <div className="flex items-baseline gap-3 mb-1">
-                          <span className="text-sm font-semibold">{r.name}</span>
-                          <span className="text-xs text-gray-500">{r.date}</span>
-                        </div>
-                        <p className="text-sm text-gray-400">{r.summary}</p>
-                      </div>
+              <div
+                className="overflow-x-auto -mx-8 px-8 pb-2"
+                style={{ scrollbarWidth: "thin", scrollbarColor: "#374151 transparent" }}
+              >
+                {(() => {
+                  const ITEM_W = 140;
+                  const AXIS_Y = 170;
+                  const totalWidth = Math.max(releases.length * ITEM_W + 60, 500);
+                  return (
+                    <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 60 }}>
+                      {/* Axis line */}
+                      <div className="absolute bg-gray-700" style={{ top: AXIS_Y, left: 20, right: 20, height: 1 }} />
+                      {releases.map((r, i) => {
+                        const cx = 20 + i * ITEM_W + ITEM_W / 2;
+                        const isHovered = hoveredReleaseId === r.id;
+                        return (
+                          <div
+                            key={r.id}
+                            className="absolute cursor-default"
+                            style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 60 }}
+                            onMouseEnter={() => setHoveredReleaseId(r.id)}
+                            onMouseLeave={() => setHoveredReleaseId(null)}
+                          >
+                            {/* Tooltip above axis — anchored to top of container */}
+                            {isHovered && (
+                              <div
+                                className="absolute z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl"
+                                style={{ top: 4, left: "50%", transform: "translateX(-50%)", width: 200 }}
+                              >
+                                <p className="text-xs font-semibold text-white mb-1">{r.name}</p>
+                                <p className="text-xs text-gray-400 mb-2">{r.date}</p>
+                                <p className="text-xs text-gray-300 leading-relaxed">{r.summary}</p>
+                              </div>
+                            )}
+                            {/* Tick */}
+                            <div className="absolute bg-gray-600" style={{ left: "50%", top: AXIS_Y - 10, width: 1, height: 11 }} />
+                            {/* Dot */}
+                            <div
+                              className={`absolute rounded-full border-2 border-gray-950 transition-colors ${isHovered ? "bg-blue-400" : "bg-blue-500"}`}
+                              style={{ left: "50%", top: AXIS_Y - 6, transform: "translateX(-50%)", width: 14, height: 14 }}
+                            />
+                            {/* Label below axis */}
+                            <div className="absolute text-center" style={{ top: AXIS_Y + 12, left: 0, right: 0 }}>
+                              <p className="text-xs font-medium text-gray-300 truncate px-2">{r.name}</p>
+                              <p className="text-xs text-gray-600 mt-0.5">{r.date}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </div>
             )}
           </div>

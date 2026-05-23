@@ -128,7 +128,7 @@ export async function getFeedbackForProduct(product_id: string): Promise<Release
 
 export async function getReleasesForProduct(product_id: string): Promise<Release[]> {
   const result = await clickhouse.query({
-    query: "SELECT * FROM releases WHERE product_id = {product_id:String} ORDER BY date ASC",
+    query: "SELECT * FROM releases WHERE product_id = {product_id:String} ORDER BY date DESC",
     query_params: { product_id },
     format: "JSONEachRow",
   });

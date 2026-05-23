@@ -14,6 +14,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { name, description = "", links = [] } = req.body;
   if (!name) return res.status(400).json({ error: "name is required" });
 
+  // Stream SSE events back to the client
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+
+  function send(data: object) {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
@@ -21,7 +31,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     },
   ];
 
-  const toolCallLog: string[] = [];
   let releases_inserted = 0;
   let product_id: string | null = null;
 
@@ -36,9 +45,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     messages.push({ role: "assistant", content: response.content });
 
-    console.log("[agent] stop_reason:", response.stop_reason);
-    console.log("[agent] content:", JSON.stringify(response.content, null, 2));
-
     if (response.stop_reason === "end_turn") break;
 
     if (response.stop_reason === "tool_use") {
@@ -47,13 +53,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       for (const block of response.content) {
         if (block.type !== "tool_use") continue;
 
-        toolCallLog.push(block.name);
+        send({ type: "tool_call", name: block.name });
+
         const result = await executeTool(block.name, block.input as Record<string, unknown>);
         const parsed = JSON.parse(result);
 
         if (block.name === "insert_product") product_id = parsed.id;
         if (block.name === "search_products" && parsed.length > 0) product_id = parsed[0].id;
-        if (block.name === "insert_release") releases_inserted++;
+        if (block.name === "insert_release") {
+          releases_inserted++;
+          send({ type: "release_inserted", name: (block.input as { name: string }).name });
+        }
 
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result });
       }
@@ -64,5 +74,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  res.status(200).json({ product_id, releases_inserted, tool_calls: toolCallLog });
+  send({ type: "done", product_id, releases_inserted });
+  res.end();
 }
