@@ -16,6 +16,16 @@ interface Release {
   summary: string;
 }
 
+interface Feedback {
+  id: string;
+  product_id: string;
+  release_id: string | null;
+  date: string;
+  score: number;
+  source_type: string;
+  raw_text: string;
+}
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
@@ -25,6 +35,7 @@ export default function Home() {
   const [newDesc, setNewDesc] = useState("");
   const [newLinks, setNewLinks] = useState("");
   const [releases, setReleases] = useState<Release[]>([]);
+  const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [loadingReleases, setLoadingReleases] = useState(false);
   const [loadingIngest, setLoadingIngest] = useState(false);
   const [streamLog, setStreamLog] = useState<string[]>([]);
@@ -66,8 +77,12 @@ export default function Home() {
 
   async function loadReleases(productId: string) {
     setLoadingReleases(true);
-    const res = await fetch(`/api/releases?product_id=${productId}`);
-    setReleases(await res.json());
+    const [relRes, fbRes] = await Promise.all([
+      fetch(`/api/releases?product_id=${productId}`),
+      fetch(`/api/feedback?product_id=${productId}`),
+    ]);
+    setReleases(await relRes.json());
+    setFeedback(await fbRes.json());
     setLoadingReleases(false);
   }
 
@@ -123,6 +138,7 @@ export default function Home() {
     await fetch(`/api/products/${selectedProduct.id}`, { method: "DELETE" });
     setSelectedProduct(null);
     setReleases([]);
+    setFeedback([]);
     setQuery("");
     const updated: Product[] = await fetch("/api/products").then((r) => r.json());
     setProducts(updated);
@@ -189,6 +205,7 @@ export default function Home() {
       setHighlightedIndex(-1);
       setSelectedProduct(null);
       setReleases([]);
+      setFeedback([]);
     },
     onFocus: () => setShowDropdown(true),
     onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -265,7 +282,7 @@ export default function Home() {
           <div className="flex items-center gap-3 mb-8">
             <button
               className="text-gray-600 hover:text-teal-400 transition-colors text-sm"
-              onClick={() => { setSelectedProduct(null); setIsNew(false); setQuery(""); setReleases([]); }}>
+              onClick={() => { setSelectedProduct(null); setIsNew(false); setQuery(""); setReleases([]); setFeedback([]); }}>
               ← back
             </button>
             <span className="text-xs font-mono text-teal-500 tracking-widest">Pulse</span>
@@ -381,9 +398,72 @@ export default function Home() {
                   const ITEM_W = 140;
                   const TOOLTIP_W = 220;
                   const AXIS_Y = 170;
+                  const GRAPH_TOP = 24;
+                  const GRAPH_BOTTOM = AXIS_Y - 14;
+                  const GRAPH_H = GRAPH_BOTTOM - GRAPH_TOP;
                   const totalWidth = Math.max(releases.length * ITEM_W + 60, 500);
+
+                  // Build sentiment graph from feedback
+                  let graphEl: React.ReactNode = null;
+                  if (feedback.length > 0) {
+                    const buckets: Record<string, { pos: number; neu: number; neg: number }> = {};
+                    for (const f of feedback) {
+                      const month = f.date.slice(0, 7);
+                      if (!buckets[month]) buckets[month] = { pos: 0, neu: 0, neg: 0 };
+                      if (f.score >= 6) buckets[month].pos++;
+                      else if (f.score >= 4) buckets[month].neu++;
+                      else buckets[month].neg++;
+                    }
+                    const months = Object.keys(buckets).sort();
+                    const minTs = new Date(months[0] + "-01").getTime();
+                    const maxTs = new Date(months[months.length - 1] + "-01").getTime();
+                    const span = maxTs - minTs || 1;
+                    const mToX = (m: string) => 20 + ((new Date(m + "-15").getTime() - minTs) / span) * (totalWidth - 40);
+                    const maxCount = Math.max(...months.map(m => Math.max(buckets[m].pos, buckets[m].neu, buckets[m].neg)), 1);
+                    const toY = (n: number) => GRAPH_BOTTOM - (n / maxCount) * GRAPH_H;
+
+                    const smooth = (pts: [number, number][]) => {
+                      if (pts.length === 0) return "";
+                      if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
+                      let d = `M ${pts[0][0]} ${pts[0][1]}`;
+                      for (let i = 1; i < pts.length; i++) {
+                        const cpx = (pts[i - 1][0] + pts[i][0]) / 2;
+                        d += ` C ${cpx} ${pts[i - 1][1]}, ${cpx} ${pts[i][1]}, ${pts[i][0]} ${pts[i][1]}`;
+                      }
+                      return d;
+                    };
+
+                    const posPath = smooth(months.map(m => [mToX(m), toY(buckets[m].pos)]));
+                    const neuPath = smooth(months.map(m => [mToX(m), toY(buckets[m].neu)]));
+                    const negPath = smooth(months.map(m => [mToX(m), toY(buckets[m].neg)]));
+
+                    graphEl = (
+                      <svg style={{ position: "absolute", left: 0, top: 0, width: totalWidth, height: AXIS_Y, pointerEvents: "none" }}>
+                        {/* subtle gridlines */}
+                        {[0.33, 0.66, 1].map(t => (
+                          <line key={t} x1={20} x2={totalWidth - 20}
+                            y1={toY(maxCount * t)} y2={toY(maxCount * t)}
+                            stroke="#1f2937" strokeWidth={1} />
+                        ))}
+                        <path d={negPath} fill="none" stroke="#f87171" strokeWidth={1.5} />
+                        <path d={neuPath} fill="none" stroke="#6b7280" strokeWidth={1.5} />
+                        <path d={posPath} fill="none" stroke="#2dd4bf" strokeWidth={1.5} />
+                        {/* legend */}
+                        <g transform="translate(24, 8)">
+                          <circle cx={4} cy={4} r={2.5} fill="#2dd4bf" />
+                          <text x={10} y={8} fontSize={8.5} fill="#6b7280" fontFamily="monospace">Positive</text>
+                          <circle cx={62} cy={4} r={2.5} fill="#6b7280" />
+                          <text x={68} y={8} fontSize={8.5} fill="#6b7280" fontFamily="monospace">Neutral</text>
+                          <circle cx={116} cy={4} r={2.5} fill="#f87171" />
+                          <text x={122} y={8} fontSize={8.5} fill="#6b7280" fontFamily="monospace">Negative</text>
+                        </g>
+                      </svg>
+                    );
+                  }
+
                   return (
                     <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 60 }}>
+                      {graphEl}
                       <div className="absolute bg-gray-800" style={{ top: AXIS_Y, left: 20, right: 20, height: 1 }} />
                       {releases.map((r, i) => {
                         const cx = 20 + i * ITEM_W + ITEM_W / 2;
