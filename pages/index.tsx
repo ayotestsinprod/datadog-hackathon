@@ -79,12 +79,11 @@ export default function Home() {
   const [releases, setReleases] = useState<Release[]>([]);
   const [feedback, setFeedback] = useState<Feedback[]>([]);
   const [summaries, setSummaries] = useState<FeedbackSummary[]>([]);
-  const [hoveredSummaryId, setHoveredSummaryId] = useState<string | null>(null);
   const [expandedSummaryId, setExpandedSummaryId] = useState<string | null>(null);
+  const [timelineScrollLeft, setTimelineScrollLeft] = useState(0);
   const [loadingReleases, setLoadingReleases] = useState(false);
   const [loadingIngest, setLoadingIngest] = useState(false);
   const [streamLog, setStreamLog] = useState<string[]>([]);
-  const [hoveredReleaseId, setHoveredReleaseId] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [showMenu, setShowMenu] = useState(false);
   const [everLoaded, setEverLoaded] = useState(false);
@@ -120,9 +119,12 @@ export default function Home() {
       const ITEM_W = 140;
       const sorted = [...releases].reverse();
       const lastCx = TIMELINE_LEFT_PAD + 20 + (sorted.length - 1) * ITEM_W + ITEM_W / 2;
-      el.scrollLeft = lastCx - el.clientWidth / 2;
+      const newScrollLeft = Math.max(0, lastCx - el.clientWidth / 2);
+      el.scrollLeft = newScrollLeft;
+      setTimelineScrollLeft(newScrollLeft);
     }
   }, [releases]);
+
 
   const filtered = products.filter((p) =>
     p.name.toLowerCase().includes(query.toLowerCase())
@@ -165,7 +167,7 @@ export default function Home() {
     }
   }
 
-  async function streamAgent(endpoint: string, body: object, onEvent?: (e: Record<string, unknown>) => void): Promise<void> {
+  async function streamAgent(endpoint: string, body: object): Promise<void> {
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -186,7 +188,6 @@ export default function Home() {
         if (event.type === "tool_call") setStreamLog(() => [`→ ${event.name}`]);
         if (event.type === "release_inserted") setStreamLog(() => [`✓ ${event.name}`]);
         if (event.type === "summary_inserted") setStreamLog(() => [`✓ summary ${event.start_date} → ${event.end_date}`]);
-        onEvent?.(event);
       }
     }
   }
@@ -265,6 +266,32 @@ export default function Home() {
   }
 
   const isIdle = !everLoaded && !selectedProduct && !isNew;
+
+  // Scroll-based active release/summary detection
+  // Read live from DOM so centerX always matches the visual center line position
+  const ITEM_W_C = 140;
+  const sortedForActive = releases.length > 0 ? [...releases].reverse() : [];
+  const centerX = (scrollRef.current?.scrollLeft ?? timelineScrollLeft)
+    + (scrollRef.current?.clientWidth ?? 0) / 2;
+  let activeRelease: Release | null = null;
+  let activeSummary: FeedbackSummary | null = null;
+  if (sortedForActive.length > 0) {
+    const firstCxC = TIMELINE_LEFT_PAD + 20 + ITEM_W_C / 2;
+    const lastCxC = TIMELINE_LEFT_PAD + 20 + (sortedForActive.length - 1) * ITEM_W_C + ITEM_W_C / 2;
+    const firstTsC = new Date(sortedForActive[0].date).getTime();
+    const lastTsC = new Date(sortedForActive[sortedForActive.length - 1].date).getTime();
+    const spanC = lastTsC - firstTsC || 1;
+    let minDist = Infinity;
+    sortedForActive.forEach((r, i) => {
+      const rcx = TIMELINE_LEFT_PAD + 20 + i * ITEM_W_C + ITEM_W_C / 2;
+      const dist = Math.abs(rcx - centerX);
+      if (dist < minDist) { minDist = dist; activeRelease = r; }
+    });
+    const centerTs = firstTsC + ((centerX - firstCxC) / Math.max(lastCxC - firstCxC, 1)) * spanC;
+    const clampedTs = Math.max(firstTsC, Math.min(lastTsC, centerTs));
+    const centerDate = new Date(clampedTs).toISOString().slice(0, 10);
+    activeSummary = summaries.find(s => s.start_date <= centerDate && s.end_date >= centerDate) ?? null;
+  }
 
   // Shared combobox input props
   const inputProps = {
@@ -459,15 +486,14 @@ export default function Home() {
               </div>
             )}
 
-            {/* Releases label / loading states */}
+            {/* Loading / empty states */}
             {(selectedProduct || loadingReleases) && (
               <div className="mb-4">
-                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Releases</p>
                 {(loadingReleases || (loadingIngest && releases.length === 0)) && (
-                  <p className="text-sm text-gray-600 animate-pulse mt-3">Loading…</p>
+                  <p className="text-sm text-gray-600 animate-pulse">Loading…</p>
                 )}
                 {!loadingReleases && !loadingIngest && releases.length === 0 && (
-                  <p className="text-sm text-gray-600 mt-3">No releases yet — use ··· to refresh.</p>
+                  <p className="text-sm text-gray-600">No releases yet — use ··· to refresh.</p>
                 )}
               </div>
             )}
@@ -492,7 +518,10 @@ export default function Home() {
                   ))}
                 </div>
               )}
-              <div ref={scrollRef} className="overflow-x-auto no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" } as React.CSSProperties}>
+              {/* Center indicator line */}
+              <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: "50%", width: 2, transform: "translateX(-50%)", background: "rgba(45,212,191,0.45)", zIndex: 15 }} />
+              <div ref={scrollRef} className="overflow-x-auto no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" } as React.CSSProperties}
+                onScroll={(e) => setTimelineScrollLeft(e.currentTarget.scrollLeft)}>
                 {(() => {
                   const ITEM_W = 140;
                   const AXIS_Y = 170;
@@ -556,14 +585,12 @@ export default function Home() {
                       <div className="absolute bg-gray-800" style={{ top: AXIS_Y, left: firstCx - ITEM_W / 2, right: 20, height: 1 }} />
                       {sorted.map((r, i) => {
                         const cx = LEFT_PAD + 20 + i * ITEM_W + ITEM_W / 2;
-                        const isHovered = hoveredReleaseId === r.id;
+                        const isActive = activeRelease?.id === r.id;
                         return (
                           <div key={r.id} className="absolute cursor-default"
-                            style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 50 }}
-                            onMouseEnter={() => { setHoveredReleaseId(r.id); setHoveredSummaryId(null); }}
-                            onMouseLeave={() => setHoveredReleaseId(null)}>
+                            style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 50 }}>
                             <div className="absolute bg-gray-700" style={{ left: "50%", top: AXIS_Y - 10, width: 1, height: 11 }} />
-                            <div className={`absolute rounded-full border-2 border-[#030712] transition-colors ${isHovered ? "bg-teal-400" : "bg-teal-600"}`}
+                            <div className={`absolute rounded-full border-2 border-[#030712] transition-colors ${isActive ? "bg-teal-400" : "bg-teal-600"}`}
                               style={{ left: "50%", top: AXIS_Y - 6, transform: "translateX(-50%)", width: 14, height: 14 }} />
                             <div className="absolute text-center" style={{ top: AXIS_Y + 12, left: 0, right: 0 }}>
                               <p className="text-xs font-medium text-gray-400 truncate px-2">{r.name}</p>
@@ -577,13 +604,11 @@ export default function Home() {
                         const x1 = Math.max(firstCx - ITEM_W / 2, dateToX(s.start_date));
                         const x2 = Math.min(lastCx + ITEM_W / 2, dateToX(s.end_date));
                         if (x2 - x1 < 4) return null;
-                        const isHov = hoveredSummaryId === s.id;
+                        const isHov = activeSummary?.id === s.id;
                         const color = isHov ? "#2dd4bf" : "#0f766e";
                         return (
                           <div key={s.id} className="absolute"
-                            style={{ left: x1, top: SPAN_Y - 4, width: x2 - x1, height: SPAN_H + 8, cursor: "pointer", zIndex: 5 }}
-                            onMouseEnter={() => { setHoveredSummaryId(s.id); setHoveredReleaseId(null); }}
-                            onMouseLeave={() => setHoveredSummaryId(null)}>
+                            style={{ left: x1, top: SPAN_Y - 4, width: x2 - x1, height: SPAN_H + 8, zIndex: 5 }}>
                             <div className="absolute" style={{
                               left: 0, top: 4, right: 0, height: SPAN_H,
                               borderTop: `1px solid ${color}`,
@@ -603,47 +628,42 @@ export default function Home() {
             </div>
           )}
 
-          {/* Info panel */}
+          {/* Info panel — always visible when product loaded */}
           {selectedProduct && !loadingReleases && releases.length > 0 && (
-            <div className="max-w-4xl mx-auto px-8 pt-6 pb-16" style={{ minHeight: 100 }}>
-              {(() => {
-                // Summary hover → two-column layout
-                if (hoveredSummaryId) {
-                  const s = summaries.find(x => x.id === hoveredSummaryId);
-                  if (!s) return null;
-                  const fbInSpan = feedback.filter(f => f.date >= s.start_date && f.date <= s.end_date);
-                  const relInSpan = [...releases].reverse().filter(r => r.date >= s.start_date && r.date <= s.end_date);
-                  const sourceCounts: Record<string, number> = {};
-                  fbInSpan.forEach(f => { sourceCounts[f.source_type] = (sourceCounts[f.source_type] || 0) + 1; });
-                  const pos = fbInSpan.filter(f => f.score >= 6).length;
-                  const neu = fbInSpan.filter(f => f.score >= 4 && f.score < 6).length;
-                  const neg = fbInSpan.filter(f => f.score < 4).length;
-                  const avg = fbInSpan.length ? (fbInSpan.reduce((sum, f) => sum + f.score, 0) / fbInSpan.length).toFixed(1) : "—";
-                  let highlights: { raw_text: string; source_type: string; score: number; date: string }[] = [];
-                  try { highlights = s.highlights.map(h => JSON.parse(h)); } catch { /* */ }
-                  const showAll = expandedSummaryId === s.id;
-                  const displayed = showAll ? highlights : highlights.slice(0, 5);
+            <div className="max-w-4xl mx-auto px-8 pt-6 pb-16">
+              <div className="grid grid-cols-5 gap-8">
+                {/* Left: Release */}
+                <div className="col-span-2">
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">Release</p>
+                  {activeRelease ? (
+                    <div>
+                      <p className="text-sm font-semibold text-white mb-0.5">{activeRelease.name}</p>
+                      <p className="text-xs text-teal-500 mb-1.5">{activeRelease.date}</p>
+                      <p className="text-sm text-gray-400 leading-relaxed">{activeRelease.summary}</p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-600">—</p>
+                  )}
+                </div>
 
-                  return (
-                    <div className="grid grid-cols-5 gap-8">
-                      {/* Left: release(s) */}
-                      <div className="col-span-2">
-                        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">Release</p>
-                        <p className="text-xs text-gray-600 mb-3">{s.start_date} → {s.end_date}</p>
-                        {relInSpan.length > 0 ? relInSpan.map(r => (
-                          <div key={r.id} className="mb-4">
-                            <p className="text-sm font-semibold text-white mb-0.5">{r.name}</p>
-                            <p className="text-xs text-teal-500 mb-1.5">{r.date}</p>
-                            <p className="text-sm text-gray-400 leading-relaxed">{r.summary}</p>
-                          </div>
-                        )) : <p className="text-sm text-gray-600">No releases in this period.</p>}
-                      </div>
-
-                      {/* Right: feedback summary */}
-                      <div className="col-span-3">
-                        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">Feedback</p>
-
-                        {/* Pie + source breakdown */}
+                {/* Right: Feedback */}
+                <div className="col-span-3">
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">Feedback</p>
+                  {activeSummary ? (() => {
+                    const s = activeSummary!;
+                    const fbInSpan = feedback.filter(f => f.date >= s.start_date && f.date <= s.end_date);
+                    const sourceCounts: Record<string, number> = {};
+                    fbInSpan.forEach(f => { sourceCounts[f.source_type] = (sourceCounts[f.source_type] || 0) + 1; });
+                    const pos = fbInSpan.filter(f => f.score >= 6).length;
+                    const neu = fbInSpan.filter(f => f.score >= 4 && f.score < 6).length;
+                    const neg = fbInSpan.filter(f => f.score < 4).length;
+                    const avg = fbInSpan.length ? (fbInSpan.reduce((sum, f) => sum + f.score, 0) / fbInSpan.length).toFixed(1) : "—";
+                    let highlights: { raw_text: string; source_type: string; score: number; date: string }[] = [];
+                    try { highlights = s.highlights.map(h => JSON.parse(h)); } catch { /* */ }
+                    const showAll = expandedSummaryId === s.id;
+                    const displayed = showAll ? highlights : highlights.slice(0, 5);
+                    return (
+                      <div>
                         <div className="flex items-start gap-3 mb-4">
                           <SimplePie counts={sourceCounts} />
                           <div className="flex flex-col gap-1 pt-1">
@@ -654,7 +674,6 @@ export default function Home() {
                               </span>
                             ))}
                           </div>
-                          {/* Sentiment stats */}
                           <div className="ml-auto flex flex-col gap-1 text-xs text-right">
                             <span className="text-gray-500">avg <span className="text-white font-medium">{avg}/10</span></span>
                             <span className="text-teal-400">{pos} positive</span>
@@ -662,11 +681,7 @@ export default function Home() {
                             <span className="text-red-400">{neg} negative</span>
                           </div>
                         </div>
-
-                        {/* Agent summary */}
                         <p className="text-sm text-gray-300 leading-relaxed mb-4 border-l-2 border-gray-800 pl-3">{s.summary}</p>
-
-                        {/* Highlights */}
                         <div className="space-y-3">
                           {displayed.map((h, i) => (
                             <div key={i} className="border-l-2 border-gray-800 pl-3">
@@ -682,22 +697,12 @@ export default function Home() {
                           </button>
                         )}
                       </div>
-                    </div>
-                  );
-                }
-
-                // Release hover → single column
-                const hovered = releases.find(r => r.id === hoveredReleaseId);
-                return hovered ? (
-                  <div>
-                    <p className="text-sm font-semibold text-white mb-1">{hovered.name}</p>
-                    <p className="text-xs text-teal-500 mb-2">{hovered.date}</p>
-                    <p className="text-sm text-gray-400 leading-relaxed">{hovered.summary}</p>
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-700 pt-1">Hover a release or time span to see details.</p>
-                );
-              })()}
+                    );
+                  })() : (
+                    <p className="text-sm text-gray-600">No analysis for this period.</p>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </>
