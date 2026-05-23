@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 
+const TIMELINE_LEFT_PAD = 700;
+
 interface Product {
   id: string;
   name: string;
@@ -46,6 +48,7 @@ export default function Home() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const refreshButtonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch("/api/products").then((r) => r.json()).then(setProducts);
@@ -67,6 +70,16 @@ export default function Home() {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
+
+  useEffect(() => {
+    if (scrollRef.current && releases.length > 0) {
+      const el = scrollRef.current;
+      const ITEM_W = 140;
+      const sorted = [...releases].reverse();
+      const lastCx = TIMELINE_LEFT_PAD + 20 + (sorted.length - 1) * ITEM_W + ITEM_W / 2;
+      el.scrollLeft = lastCx - el.clientWidth / 2;
+    }
+  }, [releases]);
 
   const filtered = products.filter((p) =>
     p.name.toLowerCase().includes(query.toLowerCase())
@@ -276,136 +289,163 @@ export default function Home() {
 
       {/* ── PRODUCT VIEW ── */}
       {!isIdle && (
-        <div className="max-w-2xl mx-auto px-8 pt-8 pb-16">
+        <>
+          {/* Header + search + product card */}
+          <div className="max-w-2xl mx-auto px-8 pt-8">
 
-          {/* Compact header */}
-          <div className="flex items-center gap-3 mb-8">
-            <button
-              className="text-gray-600 hover:text-teal-400 transition-colors text-sm"
-              onClick={() => { setSelectedProduct(null); setIsNew(false); setQuery(""); setReleases([]); setFeedback([]); }}>
-              ← back
-            </button>
-            <span className="text-xs font-mono text-teal-500 tracking-widest">Pulse</span>
-          </div>
-
-          {/* Combobox (compact) */}
-          <div className="relative mb-6" ref={dropdownRef}>
-            <input {...inputProps}
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-teal-500"
-              placeholder="Search or add a product…" />
-            <Dropdown />
-          </div>
-
-        {/* New product form */}
-        {isNew && (
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-300">New product: {query}</h2>
-              <span className="text-xs text-gray-500">description and links are optional</span>
+            {/* Compact header */}
+            <div className="flex items-center gap-3 mb-8">
+              <button
+                className="text-gray-600 hover:text-teal-400 transition-colors text-sm"
+                onClick={() => { setSelectedProduct(null); setIsNew(false); setQuery(""); setReleases([]); setFeedback([]); }}>
+                ← back
+              </button>
+              <span className="text-xs font-mono text-teal-500 tracking-widest">Pulse</span>
             </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Description</label>
-              <textarea
-                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none"
-                rows={2} value={newDesc} onChange={(e) => setNewDesc(e.target.value)}
-                placeholder="What is this product? (optional)" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Links (one per line)</label>
-              <textarea
-                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none font-mono"
-                rows={2} value={newLinks} onChange={(e) => setNewLinks(e.target.value)}
-                placeholder="https://github.com/org/repo/releases (optional)" />
-            </div>
-            <button
-              className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-5 py-2 rounded-lg disabled:opacity-50 transition-colors"
-              onClick={handleCreate} disabled={loadingIngest}>
-              {loadingIngest ? "Fetching releases…" : "Fetch Releases"}
-            </button>
-          </div>
-        )}
 
-        {/* Selected product */}
-        {selectedProduct && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  {selectedProduct.favicon_url && (
-                    <img src={selectedProduct.favicon_url} alt="" className="w-4 h-4 rounded-sm" />
-                  )}
-                  <h2 className="text-base font-semibold">{selectedProduct.name}</h2>
+            {/* Combobox (compact) */}
+            <div className="relative mb-6" ref={dropdownRef}>
+              <input {...inputProps}
+                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-teal-500"
+                placeholder="Search or add a product…" />
+              <Dropdown />
+            </div>
+
+            {/* New product form */}
+            {isNew && (
+              <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-gray-300">New product: {query}</h2>
+                  <span className="text-xs text-gray-500">description and links are optional</span>
                 </div>
-                {selectedProduct.description && (
-                  <p className="text-sm text-gray-400 mb-2">{selectedProduct.description}</p>
-                )}
-                {selectedProduct.links?.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    {selectedProduct.links.map((l, i) => (
-                      <a key={i} href={l} target="_blank" rel="noreferrer"
-                        className="text-xs text-teal-500 hover:text-teal-300 hover:underline truncate transition-colors">
-                        {l}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {/* Context menu */}
-              <div className="relative shrink-0" ref={menuRef}>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Description</label>
+                  <textarea
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none"
+                    rows={2} value={newDesc} onChange={(e) => setNewDesc(e.target.value)}
+                    placeholder="What is this product? (optional)" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Links (one per line)</label>
+                  <textarea
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none font-mono"
+                    rows={2} value={newLinks} onChange={(e) => setNewLinks(e.target.value)}
+                    placeholder="https://github.com/org/repo/releases (optional)" />
+                </div>
                 <button
-                  ref={refreshButtonRef}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 hover:text-gray-200 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-teal-500/40 transition-colors"
-                  onClick={() => setShowMenu((v) => !v)} disabled={loadingIngest}>
-                  <span className="text-lg leading-none tracking-widest">···</span>
+                  className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-5 py-2 rounded-lg disabled:opacity-50 transition-colors"
+                  onClick={handleCreate} disabled={loadingIngest}>
+                  {loadingIngest ? "Fetching releases…" : "Fetch Releases"}
                 </button>
-                {showMenu && (
-                  <div className="absolute right-0 top-full mt-1 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
-                    <button className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2" onClick={handleRefresh}>
-                      <span>↻</span> Refresh releases
+              </div>
+            )}
+
+            {/* Selected product */}
+            {selectedProduct && (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      {selectedProduct.favicon_url && (
+                        <img src={selectedProduct.favicon_url} alt="" className="w-4 h-4 rounded-sm" />
+                      )}
+                      <h2 className="text-base font-semibold">{selectedProduct.name}</h2>
+                    </div>
+                    {selectedProduct.description && (
+                      <p className="text-sm text-gray-400 mb-2">{selectedProduct.description}</p>
+                    )}
+                    {selectedProduct.links?.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        {selectedProduct.links.map((l, i) => (
+                          <a key={i} href={l} target="_blank" rel="noreferrer"
+                            className="text-xs text-teal-500 hover:text-teal-300 hover:underline truncate transition-colors">
+                            {l}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {/* Context menu */}
+                  <div className="relative shrink-0" ref={menuRef}>
+                    <button
+                      ref={refreshButtonRef}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 hover:text-gray-200 disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-teal-500/40 transition-colors"
+                      onClick={() => setShowMenu((v) => !v)} disabled={loadingIngest}>
+                      <span className="text-lg leading-none tracking-widest">···</span>
                     </button>
-                    <button className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-gray-800 flex items-center gap-2 border-t border-gray-800" onClick={handleDelete}>
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                      Delete
-                    </button>
+                    {showMenu && (
+                      <div className="absolute right-0 top-full mt-1 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-30 overflow-hidden">
+                        <button className="w-full text-left px-4 py-2.5 text-sm text-gray-200 hover:bg-gray-800 flex items-center gap-2" onClick={handleRefresh}>
+                          <span>↻</span> Refresh releases
+                        </button>
+                        <button className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-gray-800 flex items-center gap-2 border-t border-gray-800" onClick={handleDelete}>
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {loadingIngest && streamLog.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-gray-800">
+                    <p className="text-xs text-gray-500 font-mono animate-pulse">
+                      {streamLog[streamLog.length - 1] ?? "…"}
+                    </p>
                   </div>
                 )}
               </div>
-            </div>
-            {loadingIngest && streamLog.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-gray-800">
-                <p className="text-xs text-gray-500 font-mono animate-pulse">
-                  {streamLog[streamLog.length - 1] ?? "…"}
-                </p>
+            )}
+
+            {/* Releases label / loading states */}
+            {(selectedProduct || loadingReleases) && (
+              <div className="mb-4">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Releases</p>
+                {(loadingReleases || (loadingIngest && releases.length === 0)) && (
+                  <p className="text-sm text-gray-600 animate-pulse mt-3">Loading…</p>
+                )}
+                {!loadingReleases && !loadingIngest && releases.length === 0 && (
+                  <p className="text-sm text-gray-600 mt-3">No releases yet — use ··· to refresh.</p>
+                )}
               </div>
             )}
           </div>
-        )}
 
-        {/* Timeline */}
-        {(selectedProduct || loadingReleases) && (
-          <div>
-            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-6">Releases</p>
-            {loadingReleases || (loadingIngest && releases.length === 0) ? (
-              <p className="text-sm text-gray-600 animate-pulse">Loading…</p>
-            ) : releases.length === 0 ? (
-              <p className="text-sm text-gray-600">No releases yet — use ··· to refresh.</p>
-            ) : (
-              <div className="overflow-x-auto -mx-8 px-8 pb-2"
-                style={{ scrollbarWidth: "thin", scrollbarColor: "#374151 transparent" }}>
+          {/* Full-width timeline */}
+          {selectedProduct && !loadingReleases && releases.length > 0 && (
+            <div className="relative">
+              {/* edge fades */}
+              <div className="absolute left-0 top-0 bottom-0 w-24 z-10 pointer-events-none"
+                style={{ background: "linear-gradient(to right, #030712 20%, transparent)" }} />
+              <div className="absolute right-0 top-0 bottom-0 w-24 z-10 pointer-events-none"
+                style={{ background: "linear-gradient(to left, #030712 20%, transparent)" }} />
+              {/* legend — pinned top-right, above fades */}
+              {feedback.length > 0 && (
+                <div className="absolute top-3 right-32 z-20 flex flex-col gap-1.5 pointer-events-none bg-gray-900/90 border border-gray-800 rounded-lg px-3 py-2">
+                  {[["#2dd4bf", "Positive"], ["#6b7280", "Neutral"], ["#f87171", "Negative"]].map(([color, label]) => (
+                    <span key={label} className="flex items-center gap-1.5">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+                      <span className="text-xs font-mono" style={{ color: "#6b7280" }}>{label}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div ref={scrollRef} className="overflow-x-auto no-scrollbar">
                 {(() => {
                   const ITEM_W = 140;
-                  const TOOLTIP_W = 220;
                   const AXIS_Y = 170;
                   const GRAPH_TOP = 24;
                   const GRAPH_BOTTOM = AXIS_Y - 14;
                   const GRAPH_H = GRAPH_BOTTOM - GRAPH_TOP;
-                  const totalWidth = Math.max(releases.length * ITEM_W + 60, 500);
+                  const sorted = [...releases].reverse(); // oldest → newest left → right
+                  const LEFT_PAD = TIMELINE_LEFT_PAD;
+                  const totalWidth = LEFT_PAD + sorted.length * ITEM_W + 60 + 800;
+                  const firstCx = LEFT_PAD + 20 + ITEM_W / 2;
+                  const lastCx = LEFT_PAD + 20 + (sorted.length - 1) * ITEM_W + ITEM_W / 2;
 
-                  // Build sentiment graph from feedback
                   let graphEl: React.ReactNode = null;
-                  if (feedback.length > 0) {
+                  if (feedback.length > 0 && sorted.length > 0) {
                     const buckets: Record<string, { pos: number; neu: number; neg: number }> = {};
                     for (const f of feedback) {
                       const month = f.date.slice(0, 7);
@@ -415,13 +455,13 @@ export default function Home() {
                       else buckets[month].neg++;
                     }
                     const months = Object.keys(buckets).sort();
-                    const minTs = new Date(months[0] + "-01").getTime();
-                    const maxTs = new Date(months[months.length - 1] + "-01").getTime();
+                    // Map feedback months between the first and last release x-positions
+                    const minTs = new Date(sorted[0].date).getTime();
+                    const maxTs = new Date(sorted[sorted.length - 1].date).getTime();
                     const span = maxTs - minTs || 1;
-                    const mToX = (m: string) => 20 + ((new Date(m + "-15").getTime() - minTs) / span) * (totalWidth - 40);
+                    const mToX = (m: string) => firstCx + ((new Date(m + "-15").getTime() - minTs) / span) * (lastCx - firstCx);
                     const maxCount = Math.max(...months.map(m => Math.max(buckets[m].pos, buckets[m].neu, buckets[m].neg)), 1);
                     const toY = (n: number) => GRAPH_BOTTOM - (n / maxCount) * GRAPH_H;
-
                     const smooth = (pts: [number, number][]) => {
                       if (pts.length === 0) return "";
                       if (pts.length === 1) return `M ${pts[0][0]} ${pts[0][1]}`;
@@ -432,57 +472,33 @@ export default function Home() {
                       }
                       return d;
                     };
-
                     const posPath = smooth(months.map(m => [mToX(m), toY(buckets[m].pos)]));
                     const neuPath = smooth(months.map(m => [mToX(m), toY(buckets[m].neu)]));
                     const negPath = smooth(months.map(m => [mToX(m), toY(buckets[m].neg)]));
-
                     graphEl = (
                       <svg style={{ position: "absolute", left: 0, top: 0, width: totalWidth, height: AXIS_Y, pointerEvents: "none" }}>
-                        {/* subtle gridlines */}
                         {[0.33, 0.66, 1].map(t => (
-                          <line key={t} x1={20} x2={totalWidth - 20}
-                            y1={toY(maxCount * t)} y2={toY(maxCount * t)}
-                            stroke="#1f2937" strokeWidth={1} />
+                          <line key={t} x1={0} x2={totalWidth} y1={toY(maxCount * t)} y2={toY(maxCount * t)} stroke="#1f2937" strokeWidth={1} />
                         ))}
                         <path d={negPath} fill="none" stroke="#f87171" strokeWidth={1.5} />
                         <path d={neuPath} fill="none" stroke="#6b7280" strokeWidth={1.5} />
                         <path d={posPath} fill="none" stroke="#2dd4bf" strokeWidth={1.5} />
-                        {/* legend */}
-                        <g transform="translate(24, 8)">
-                          <circle cx={4} cy={4} r={2.5} fill="#2dd4bf" />
-                          <text x={10} y={8} fontSize={8.5} fill="#6b7280" fontFamily="monospace">Positive</text>
-                          <circle cx={62} cy={4} r={2.5} fill="#6b7280" />
-                          <text x={68} y={8} fontSize={8.5} fill="#6b7280" fontFamily="monospace">Neutral</text>
-                          <circle cx={116} cy={4} r={2.5} fill="#f87171" />
-                          <text x={122} y={8} fontSize={8.5} fill="#6b7280" fontFamily="monospace">Negative</text>
-                        </g>
                       </svg>
                     );
                   }
 
                   return (
-                    <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 60 }}>
+                    <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 40 }}>
                       {graphEl}
-                      <div className="absolute bg-gray-800" style={{ top: AXIS_Y, left: 20, right: 20, height: 1 }} />
-                      {releases.map((r, i) => {
-                        const cx = 20 + i * ITEM_W + ITEM_W / 2;
+                      <div className="absolute bg-gray-800" style={{ top: AXIS_Y, left: firstCx - ITEM_W / 2, right: 20, height: 1 }} />
+                      {sorted.map((r, i) => {
+                        const cx = LEFT_PAD + 20 + i * ITEM_W + ITEM_W / 2;
                         const isHovered = hoveredReleaseId === r.id;
-                        const rawLeft = cx - TOOLTIP_W / 2;
-                        const tooltipLeft = Math.max(4, Math.min(rawLeft, totalWidth - TOOLTIP_W - 4));
                         return (
                           <div key={r.id} className="absolute cursor-default"
-                            style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 60 }}
+                            style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 40 }}
                             onMouseEnter={() => setHoveredReleaseId(r.id)}
                             onMouseLeave={() => setHoveredReleaseId(null)}>
-                            {isHovered && (
-                              <div className="absolute z-20 bg-gray-900 border border-gray-700 rounded-xl p-3 shadow-xl overflow-y-auto"
-                                style={{ top: 4, left: tooltipLeft - (cx - ITEM_W / 2), width: TOOLTIP_W, maxHeight: AXIS_Y - 16 }}>
-                                <p className="text-xs font-semibold text-white mb-1">{r.name}</p>
-                                <p className="text-xs text-teal-500 mb-2">{r.date}</p>
-                                <p className="text-xs text-gray-400 leading-relaxed">{r.summary}</p>
-                              </div>
-                            )}
                             <div className="absolute bg-gray-700" style={{ left: "50%", top: AXIS_Y - 10, width: 1, height: 11 }} />
                             <div className={`absolute rounded-full border-2 border-[#030712] transition-colors ${isHovered ? "bg-teal-400" : "bg-teal-600"}`}
                               style={{ left: "50%", top: AXIS_Y - 6, transform: "translateX(-50%)", width: 14, height: 14 }} />
@@ -497,10 +513,27 @@ export default function Home() {
                   );
                 })()}
               </div>
-            )}
-          </div>
-        )}
-        </div>
+            </div>
+          )}
+
+          {/* Info panel */}
+          {selectedProduct && !loadingReleases && releases.length > 0 && (
+            <div className="max-w-2xl mx-auto px-8 pt-5 pb-16" style={{ minHeight: 80 }}>
+              {(() => {
+                const hovered = releases.find(r => r.id === hoveredReleaseId);
+                return hovered ? (
+                  <div>
+                    <p className="text-sm font-semibold text-white mb-1">{hovered.name}</p>
+                    <p className="text-xs text-teal-500 mb-2">{hovered.date}</p>
+                    <p className="text-sm text-gray-400 leading-relaxed">{hovered.summary}</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-700 pt-1">Hover a release to see details.</p>
+                );
+              })()}
+            </div>
+          )}
+        </>
       )}
     </main>
   );
