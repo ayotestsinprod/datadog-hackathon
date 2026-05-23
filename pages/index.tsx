@@ -174,7 +174,10 @@ export default function Home() {
         {/* New product form */}
         {isNew && (
           <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 mb-6 space-y-4">
-            <h2 className="text-sm font-semibold text-gray-300">New product</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-300">New product: {query}</h2>
+              <span className="text-xs text-gray-500">description and links are optional</span>
+            </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Description</label>
               <textarea
@@ -182,17 +185,17 @@ export default function Home() {
                 rows={2}
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
-                placeholder="What is this product?"
+                placeholder="What is this product? (optional)"
               />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Links (one per line)</label>
               <textarea
                 className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 resize-none font-mono"
-                rows={3}
+                rows={2}
                 value={newLinks}
                 onChange={(e) => setNewLinks(e.target.value)}
-                placeholder="https://github.com/org/repo/releases"
+                placeholder="https://github.com/org/repo/releases (optional)"
               />
             </div>
             <button
@@ -200,7 +203,7 @@ export default function Home() {
               onClick={handleCreate}
               disabled={loadingIngest}
             >
-              {loadingIngest ? "Fetching releases…" : "Add & Fetch Releases"}
+              {loadingIngest ? "Fetching releases…" : "Fetch Releases"}
             </button>
           </div>
         )}
