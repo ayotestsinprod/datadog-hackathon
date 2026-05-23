@@ -247,7 +247,7 @@ export default function Home() {
         {/* Timeline */}
         {(selectedProduct || loadingReleases) && (
           <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-6">
               Releases
             </p>
             {loadingReleases ? (
@@ -257,22 +257,46 @@ export default function Home() {
                 No releases yet — hit Refresh to fetch them.
               </p>
             ) : (
-              <div className="relative">
-                <div className="absolute left-[7px] top-2 bottom-2 w-px bg-gray-800" />
-                <div className="space-y-6">
-                  {releases.map((r) => (
-                    <div key={r.id} className="flex gap-4 pl-6 relative">
-                      <div className="absolute left-0 top-1.5 w-3.5 h-3.5 rounded-full bg-blue-500 border-2 border-gray-950 shrink-0" />
-                      <div className="flex-1 min-w-0 pb-2">
-                        <div className="flex items-baseline gap-3 mb-1">
-                          <span className="text-sm font-semibold">{r.name}</span>
-                          <span className="text-xs text-gray-500">{r.date}</span>
-                        </div>
-                        <p className="text-sm text-gray-400">{r.summary}</p>
-                      </div>
+              <div className="overflow-x-auto -mx-8 px-8 pb-4">
+                {/* Render oldest→newest left→right */}
+                {(() => {
+                  const ordered = [...releases].reverse();
+                  const ITEM_W = 140;
+                  const totalWidth = Math.max(ordered.length * ITEM_W + 60, 500);
+                  return (
+                    <div className="relative" style={{ width: totalWidth, height: 140 }}>
+                      {/* Axis line */}
+                      <div className="absolute bg-gray-700" style={{ top: 60, left: 20, right: 20, height: 1 }} />
+                      {ordered.map((r, i) => {
+                        const cx = 20 + i * ITEM_W + ITEM_W / 2;
+                        return (
+                          <div key={r.id} className="absolute group" style={{ left: cx - 7, top: 0 }}>
+                            {/* Tick */}
+                            <div className="absolute bg-gray-600" style={{ left: 6, top: 48, width: 1, height: 14 }} />
+                            {/* Dot */}
+                            <div className="absolute w-3.5 h-3.5 rounded-full bg-blue-500 border-2 border-gray-950 cursor-default" style={{ top: 53 }} />
+                            {/* Label below axis */}
+                            <div className="absolute text-center" style={{ top: 74, left: -(ITEM_W / 2 - 7), width: ITEM_W }}>
+                              <p className="text-xs font-medium text-gray-300 truncate px-1">{r.name}</p>
+                              <p className="text-xs text-gray-600 mt-0.5">{r.date}</p>
+                            </div>
+                            {/* Hover tooltip above axis */}
+                            <div
+                              className="absolute invisible group-hover:visible z-20 pointer-events-none"
+                              style={{ bottom: 90, left: -(ITEM_W / 2 - 7), width: ITEM_W + 60 }}
+                            >
+                              <div className="bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl">
+                                <p className="text-xs font-semibold text-white mb-1">{r.name}</p>
+                                <p className="text-xs text-gray-400 mb-2">{r.date}</p>
+                                <p className="text-xs text-gray-300 leading-relaxed">{r.summary}</p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </div>
             )}
           </div>
