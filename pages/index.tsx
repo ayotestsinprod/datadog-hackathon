@@ -72,20 +72,15 @@ export default function Home() {
     await loadReleases(p.id);
   }
 
-  async function runIngest(body: object, onDone: (product_id: string) => Promise<void>) {
-    setLoadingIngest(true);
-    setStreamLog([]);
-
-    const res = await fetch("/api/agent/ingest", {
+  async function streamAgent(endpoint: string, body: object, onEvent?: (e: Record<string, unknown>) => void): Promise<void> {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -94,34 +89,33 @@ export default function Home() {
       buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.startsWith("data: ")) continue;
-        const event = JSON.parse(line.slice(6));
-        if (event.type === "tool_call") {
-          setStreamLog((l) => [...l, `→ ${event.name}`]);
-        } else if (event.type === "release_inserted") {
-          setStreamLog((l) => [...l, `  ✓ ${event.name}`]);
-        } else if (event.type === "done") {
-          await onDone(event.product_id);
-        }
+        const event = JSON.parse(line.slice(6)) as Record<string, unknown>;
+        if (event.type === "tool_call") setStreamLog(() => [`→ ${event.name}`]);
+        if (event.type === "release_inserted") setStreamLog(() => [`✓ ${event.name}`]);
+        onEvent?.(event);
       }
     }
-
-    setLoadingIngest(false);
   }
 
   async function handleRefresh() {
     if (!selectedProduct) return;
-    await runIngest(
-      { name: selectedProduct.name, description: selectedProduct.description, links: selectedProduct.links },
-      async (product_id) => {
-        await loadReleases(product_id ?? selectedProduct.id);
-      }
-    );
+    setLoadingIngest(true);
+    setStreamLog([]);
+    const p = selectedProduct;
+    const agentBody = { product_id: p.id, name: p.name, description: p.description, links: p.links };
+    await streamAgent("/api/agent/refresh", agentBody);
+    await loadReleases(p.id);
+    // Re-fetch product to pick up any updated metadata
+    const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+    const fresh = updated.find((x) => x.id === p.id);
+    if (fresh) { setSelectedProduct(fresh); setProducts(updated); }
+    setLoadingIngest(false);
   }
 
   async function handleCreate() {
     const links = newLinks.split("\n").map((l) => l.trim()).filter(Boolean);
 
-    // Create the product row immediately so we can show the card right away
+    // Create product row immediately
     const createRes = await fetch("/api/products", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -129,16 +123,25 @@ export default function Home() {
     });
     const { id: product_id } = await createRes.json();
 
-    // Show the product card before ingest starts
-    setSelectedProduct({ id: product_id, name: query, description: newDesc, links });
+    setSelectedProduct({ id: product_id, name: query, description: newDesc, links, favicon_url: "" });
     setIsNew(false);
-    fetch("/api/products").then((r) => r.json()).then(setProducts);
 
-    // Stream ingest — we already know the product_id so use it directly
-    await runIngest(
-      { name: query, description: newDesc, links },
-      async () => loadReleases(product_id)
-    );
+    setLoadingIngest(true);
+    setStreamLog([]);
+    const agentBody = { product_id, name: query, description: newDesc, links };
+
+    // Run both agents sequentially: first populate metadata, then fetch releases
+    await streamAgent("/api/agent/initialize", agentBody);
+    await streamAgent("/api/agent/refresh", agentBody);
+
+    // Re-fetch product to get populated description/links/favicon
+    const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+    setProducts(updated);
+    const fresh = updated.find((p) => p.id === product_id);
+    if (fresh) setSelectedProduct(fresh);
+
+    await loadReleases(product_id);
+    setLoadingIngest(false);
   }
 
   return (
@@ -250,7 +253,12 @@ export default function Home() {
           <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 mb-6">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <h2 className="text-base font-semibold mb-1">{selectedProduct.name}</h2>
+                <div className="flex items-center gap-2 mb-1">
+                  {selectedProduct.favicon_url && (
+                    <img src={selectedProduct.favicon_url} alt="" className="w-4 h-4 rounded-sm" />
+                  )}
+                  <h2 className="text-base font-semibold">{selectedProduct.name}</h2>
+                </div>
                 {selectedProduct.description && (
                   <p className="text-sm text-gray-400 mb-2">{selectedProduct.description}</p>
                 )}

@@ -1,14 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { insertProduct, insertRelease, updateProduct, searchProductsByName, getReleasesForProduct } from "../../../lib/db";
 
-export const tools: Anthropic.Tool[] = [
+const allTools: Anthropic.Tool[] = [
   {
     name: "search_products",
     description: "Search for an existing product by name. Returns matching products with their IDs.",
     input_schema: {
       type: "object" as const,
       properties: {
-        name: { type: "string", description: "The product name to search for" },
+        name: { type: "string" },
       },
       required: ["name"],
     },
@@ -27,55 +27,65 @@ export const tools: Anthropic.Tool[] = [
     },
   },
   {
-    name: "search_releases",
-    description: "Get all existing releases for a product. Use this before inserting to avoid duplicates.",
+    name: "update_product",
+    description: "Update description, links, and/or favicon_url for a product.",
     input_schema: {
       type: "object" as const,
       properties: {
-        product_id: { type: "string", description: "The product ID to fetch releases for" },
+        product_id: { type: "string" },
+        description: { type: "string", description: "Concise 1-2 sentence description of the product" },
+        links: { type: "array", items: { type: "string" }, description: "Official URLs: homepage, changelog, GitHub releases, etc." },
+        favicon_url: { type: "string", description: "Use https://www.google.com/s2/favicons?domain={main_domain}&sz=64" },
       },
       required: ["product_id"],
     },
   },
   {
-    name: "update_product",
-    description: "Update the description and/or known links for an existing product. Use this when the product was created without a description or links.",
+    name: "search_releases",
+    description: "Get all existing releases for a product. Use before inserting to avoid duplicates.",
     input_schema: {
       type: "object" as const,
       properties: {
         product_id: { type: "string" },
-        description: { type: "string", description: "A concise 1-2 sentence description of the product" },
-        links: { type: "array", items: { type: "string" }, description: "Official URLs: homepage, changelog, GitHub releases, etc." },
       },
       required: ["product_id"],
     },
   },
   {
     name: "fetch_url",
-    description: "Fetch the text content of a URL. Use this to retrieve official release pages, GitHub releases, or changelogs to find up-to-date release information.",
+    description: "Fetch the text content of a URL — changelogs, GitHub releases, homepages, etc.",
     input_schema: {
       type: "object" as const,
       properties: {
-        url: { type: "string", description: "The URL to fetch" },
+        url: { type: "string" },
       },
       required: ["url"],
     },
   },
   {
     name: "insert_release",
-    description: "Insert a new release for a product. Only call this for releases not already in the database.",
+    description: "Insert a new release. Only call for releases not already in the database.",
     input_schema: {
       type: "object" as const,
       properties: {
         product_id: { type: "string" },
         name: { type: "string", description: "Release name or version e.g. 'v3.0', 'Claude 3 Opus'" },
-        date: { type: "string", description: "Release date in YYYY-MM-DD format" },
+        date: { type: "string", description: "YYYY-MM-DD" },
         summary: { type: "string", description: "1-2 sentence summary of what changed" },
       },
       required: ["product_id", "name", "date", "summary"],
     },
   },
 ];
+
+// Scoped tool sets per agent
+export const initializeTools = allTools.filter((t) =>
+  ["update_product", "fetch_url"].includes(t.name)
+);
+
+export const refreshTools = allTools.filter((t) =>
+  ["search_releases", "fetch_url", "insert_release"].includes(t.name)
+);
 
 export async function executeTool(
   toolName: string,
@@ -91,6 +101,7 @@ export async function executeTool(
       name: input.name as string,
       description: input.description as string,
       links: (input.links as string[]) ?? [],
+      favicon_url: "",
     });
     return JSON.stringify({ id });
   }
@@ -99,6 +110,7 @@ export async function executeTool(
     await updateProduct(input.product_id as string, {
       description: input.description as string | undefined,
       links: input.links as string[] | undefined,
+      favicon_url: input.favicon_url as string | undefined,
     });
     return JSON.stringify({ ok: true });
   }
@@ -114,7 +126,6 @@ export async function executeTool(
         headers: { "User-Agent": "Mozilla/5.0 (compatible; PulseBot/1.0)" },
       });
       const html = await res.text();
-      // Strip HTML tags and collapse whitespace, truncate to avoid token overflow
       const text = html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
         .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
