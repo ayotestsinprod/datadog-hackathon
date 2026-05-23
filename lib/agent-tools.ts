@@ -2,6 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct, updateProduct, getFeedbackSummariesForProduct, getFeedbackInRange, insertFeedbackSummary } from "./db";
 import { nimbleSearch, type SearchDepth } from "./nimble";
 
+type FeedbackSourceType = "twitter" | "youtube" | "blog" | "review_site" | "other";
+
 const allTools: Anthropic.Tool[] = [
   {
     name: "search_products",
@@ -91,6 +93,38 @@ const allTools: Anthropic.Tool[] = [
         summary: { type: "string", description: "1-2 sentence summary of what changed" },
       },
       required: ["product_id", "name", "date", "summary"],
+    },
+  },
+  {
+    name: "search_feedback",
+    description: "Get all existing feedback rows for a product. Use before inserting to avoid duplicating the same source_url.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        product_id: { type: "string" },
+      },
+      required: ["product_id"],
+    },
+  },
+  {
+    name: "insert_feedback",
+    description: "Insert one feedback row (a single post/comment/review about the product). Classify sentiment with a 1-10 score. Only call for source_urls not already in the database.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        product_id: { type: "string" },
+        source_url: { type: "string", description: "Canonical URL of the post/thread/video/review" },
+        source_type: {
+          type: "string",
+          enum: ["twitter", "youtube", "blog", "review_site", "other"],
+          description: "twitter = X/Twitter; youtube = YouTube; blog = vendor/personal blog post; review_site = G2/Product Hunt/Trustpilot/etc; other = Reddit, HN, forums, anything else",
+        },
+        score: { type: "integer", minimum: 1, maximum: 10, description: "Sentiment 1-10. 1-3 = negative (complaints, churn, frustration). 4-5 = neutral/mixed. 6-7 = mildly positive. 8-10 = strongly positive (praise, recommendations)." },
+        date: { type: "string", description: "When the feedback was posted (YYYY-MM-DD). If unknown, use today." },
+        raw_text: { type: "string", description: "The actual feedback text — quote, excerpt, or summary of what the author said about the product. Keep under 500 chars." },
+        release_id: { type: "string", description: "Optional. Set if this feedback is clearly about a specific release; otherwise omit." },
+      },
+      required: ["product_id", "source_url", "source_type", "score", "date", "raw_text"],
     },
   },
 ];
@@ -228,6 +262,24 @@ export async function executeTool(
       name: input.name as string,
       date: input.date as string,
       summary: input.summary as string,
+    });
+    return JSON.stringify({ id });
+  }
+
+  if (toolName === "search_feedback") {
+    const feedback = await getFeedbackForProduct(input.product_id as string);
+    return JSON.stringify(feedback.map((f) => ({ id: f.id, source_url: f.source_url, source_type: f.source_type, score: f.score, date: f.date })));
+  }
+
+  if (toolName === "insert_feedback") {
+    const id = await insertFeedback({
+      product_id: input.product_id as string,
+      release_id: (input.release_id as string | undefined) ?? null,
+      date: input.date as string,
+      source_url: input.source_url as string,
+      source_type: input.source_type as FeedbackSourceType,
+      score: input.score as number,
+      raw_text: input.raw_text as string,
     });
     return JSON.stringify({ id });
   }
