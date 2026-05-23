@@ -36,6 +36,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     messages.push({ role: "assistant", content: response.content });
 
+    console.log("[agent] stop_reason:", response.stop_reason);
+    console.log("[agent] content:", JSON.stringify(response.content, null, 2));
+
     if (response.stop_reason === "end_turn") break;
 
     if (response.stop_reason === "tool_use") {

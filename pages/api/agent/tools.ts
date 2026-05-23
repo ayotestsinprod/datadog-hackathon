@@ -38,6 +38,17 @@ export const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "fetch_url",
+    description: "Fetch the text content of a URL. Use this to retrieve official release pages, GitHub releases, or changelogs to find up-to-date release information.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        url: { type: "string", description: "The URL to fetch" },
+      },
+      required: ["url"],
+    },
+  },
+  {
     name: "insert_release",
     description: "Insert a new release for a product. Only call this for releases not already in the database.",
     input_schema: {
@@ -74,6 +85,26 @@ export async function executeTool(
   if (toolName === "search_releases") {
     const releases = await getReleasesForProduct(input.product_id as string);
     return JSON.stringify(releases);
+  }
+
+  if (toolName === "fetch_url") {
+    try {
+      const res = await fetch(input.url as string, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; PulseBot/1.0)" },
+      });
+      const html = await res.text();
+      // Strip HTML tags and collapse whitespace, truncate to avoid token overflow
+      const text = html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 6000);
+      return JSON.stringify({ url: input.url, content: text });
+    } catch (err) {
+      return JSON.stringify({ error: `Failed to fetch ${input.url}: ${(err as Error).message}` });
+    }
   }
 
   if (toolName === "insert_release") {
