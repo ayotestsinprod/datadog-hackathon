@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct } from "../../../lib/db";
+import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct, updateProduct } from "../../../lib/db";
 import { nimbleSearch, type SearchDepth } from "../../../lib/nimble";
 
 const allTools: Anthropic.Tool[] = [
@@ -97,11 +97,11 @@ const allTools: Anthropic.Tool[] = [
 
 // Scoped tool sets per agent
 export const initializeTools = allTools.filter((t) =>
-  ["update_product", "fetch_url"].includes(t.name)
+  ["update_product", "fetch_url", "nimble_search"].includes(t.name)
 );
 
 export const refreshTools = allTools.filter((t) =>
-  ["search_releases", "fetch_url", "insert_release"].includes(t.name)
+  ["search_releases", "fetch_url", "nimble_search", "insert_release"].includes(t.name)
 );
 
 export async function executeTool(

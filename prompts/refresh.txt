@@ -7,17 +7,20 @@ Follow these steps in order. Do not skip any step.
 STEP 1 — CHECK EXISTING RELEASES
 Call search_releases with the product ID. Note every release name already stored — you will not insert these again.
 
-STEP 2 — ATTEMPT TO FETCH THE OFFICIAL RELEASES PAGE
-From the provided links or your knowledge of the product, identify the best URL for a changelog or releases list.
-Call fetch_url on it. Evaluate the result:
-- If you get a "Page not found", empty body, or pure JavaScript with no readable release content, the page is likely JS-rendered and cannot be scraped. Try one alternative URL (e.g. a GitHub releases page, a different changelog path).
-- If both attempts return no useful content, proceed to step 3 using your training knowledge instead.
+STEP 2 — DISCOVER RELEASES VIA NIMBLE
+Call nimble_search to find authoritative release information. Use 'fast' depth so you get content snippets, not just URLs.
+- Start with a focused query like '<product name> release notes' or '<product name> changelog'.
+- If results are thin or irrelevant, try one alternative query (e.g. '<product name> latest version', '<product name> announcement <year>').
+- Prefer official sources (vendor blog, docs site, GitHub releases) over forums and review sites for facts about release names and dates.
+- If the provided links contain a known vendor domain, you can use include_domains to bias toward it.
+
+If nimble_search snippets are insufficient for a particular release, call fetch_url on the most promising result for the full page.
 
 STEP 3 — INSERT NEW RELEASES ONLY
 Using either the scraped content OR your training knowledge of the product, identify all significant public releases.
 Compare against existing releases from step 1.
 For each release NOT already in the database, call insert_release.
-Insert in chronological order (oldest first). Include major and minor releases.
-Use YYYY-MM-DD for dates. Estimate if the exact date is uncertain.
+Insert in chronological order (oldest first). Include all significant releases — major, minor, and notable patches.
+Use YYYY-MM-DD for dates. If the exact date is uncertain, use your best estimate based on the sources you found.
 
 IMPORTANT: You MUST call insert_release at least once if you know of any releases for this product. Do not stop after failed scraping — always fall back to your training knowledge.
