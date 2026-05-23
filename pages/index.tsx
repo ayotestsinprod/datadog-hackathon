@@ -115,19 +115,24 @@ export default function Home() {
 
   async function handleCreate() {
     const links = newLinks.split("\n").map((l) => l.trim()).filter(Boolean);
+
+    // Create the product row immediately so we can show the card right away
+    const createRes = await fetch("/api/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: query, description: newDesc, links }),
+    });
+    const { id: product_id } = await createRes.json();
+
+    // Show the product card before ingest starts
+    setSelectedProduct({ id: product_id, name: query, description: newDesc, links });
+    setIsNew(false);
+    fetch("/api/products").then((r) => r.json()).then(setProducts);
+
+    // Stream ingest — we already know the product_id so use it directly
     await runIngest(
       { name: query, description: newDesc, links },
-      async (product_id) => {
-        const productsRes = await fetch("/api/products");
-        const updated: Product[] = await productsRes.json();
-        setProducts(updated);
-        const created = updated.find((p) => p.id === product_id);
-        if (created) {
-          setSelectedProduct(created);
-          setIsNew(false);
-          await loadReleases(created.id);
-        }
-      }
+      async () => loadReleases(product_id)
     );
   }
 
