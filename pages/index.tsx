@@ -80,7 +80,7 @@ export default function Home() {
     await loadReleases(p.id);
 
     // Backfill missing metadata for older products
-    if (!p.description || !p.favicon_url || p.links.length === 0) {
+    if (p.id !== "9a6188ba-eda0-45e0-a6f0-507fecbfed0a" && (!p.description || !p.favicon_url || p.links.length === 0)) {
       setLoadingIngest(true);
       setStreamLog([]);
       await streamAgent("/api/agent/initialize", { product_id: p.id, name: p.name, description: p.description, links: p.links });
@@ -130,6 +130,7 @@ export default function Home() {
 
   async function handleRefresh() {
     if (!selectedProduct) return;
+    if (selectedProduct.id === "9a6188ba-eda0-45e0-a6f0-507fecbfed0a") { setShowMenu(false); return; }
     setShowMenu(false);
     setLoadingIngest(true);
     setStreamLog([]);
