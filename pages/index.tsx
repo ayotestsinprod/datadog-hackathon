@@ -300,7 +300,7 @@ export default function Home() {
               >
                 {(() => {
                   const ITEM_W = 140;
-                  const AXIS_Y = 120;
+                  const AXIS_Y = 170;
                   const totalWidth = Math.max(releases.length * ITEM_W + 60, 500);
                   return (
                     <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 60 }}>
@@ -317,11 +317,11 @@ export default function Home() {
                             onMouseEnter={() => setHoveredReleaseId(r.id)}
                             onMouseLeave={() => setHoveredReleaseId(null)}
                           >
-                            {/* Tooltip above axis */}
+                            {/* Tooltip above axis — anchored to top of container */}
                             {isHovered && (
                               <div
                                 className="absolute z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl"
-                                style={{ bottom: 60 + (180 - AXIS_Y), left: "50%", transform: "translateX(-50%)", width: 200 }}
+                                style={{ top: 4, left: "50%", transform: "translateX(-50%)", width: 200 }}
                               >
                                 <p className="text-xs font-semibold text-white mb-1">{r.name}</p>
                                 <p className="text-xs text-gray-400 mb-2">{r.date}</p>
