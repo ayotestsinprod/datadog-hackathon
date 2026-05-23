@@ -48,10 +48,6 @@ body {
   animation: glow-pulse 3s ease-in-out infinite;
 }
 
-/* Hide scrollbar utility */
-.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
-.no-scrollbar::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
-
 /* Slim dark scrollbars */
 ::-webkit-scrollbar {
   height: 4px;
@@ -67,3 +63,7 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #4b5563;
 }
+
+/* Hide scrollbar utility — must come after global scrollbar rules */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }

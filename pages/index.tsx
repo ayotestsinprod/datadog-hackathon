@@ -431,7 +431,7 @@ export default function Home() {
                   ))}
                 </div>
               )}
-              <div ref={scrollRef} className="overflow-x-auto no-scrollbar">
+              <div ref={scrollRef} className="overflow-x-auto no-scrollbar" style={{ scrollbarWidth: "none", msOverflowStyle: "none" } as React.CSSProperties}>
                 {(() => {
                   const ITEM_W = 140;
                   const AXIS_Y = 170;
