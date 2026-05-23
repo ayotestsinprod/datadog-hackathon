@@ -27,6 +27,7 @@ export default function Home() {
   const [loadingReleases, setLoadingReleases] = useState(false);
   const [loadingIngest, setLoadingIngest] = useState(false);
   const [streamLog, setStreamLog] = useState<string[]>([]);
+  const [hoveredReleaseId, setHoveredReleaseId] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -293,39 +294,51 @@ export default function Home() {
                 No releases yet — hit Refresh to fetch them.
               </p>
             ) : (
-              <div className="overflow-x-auto -mx-8 px-8 pb-4">
-                {/* Render oldest→newest left→right */}
+              <div
+                className="overflow-x-auto -mx-8 px-8 pb-2"
+                style={{ scrollbarWidth: "thin", scrollbarColor: "#374151 transparent" }}
+              >
                 {(() => {
-                  const ordered = [...releases].reverse();
                   const ITEM_W = 140;
-                  const totalWidth = Math.max(ordered.length * ITEM_W + 60, 500);
+                  const AXIS_Y = 120;
+                  const totalWidth = Math.max(releases.length * ITEM_W + 60, 500);
                   return (
-                    <div className="relative" style={{ width: totalWidth, height: 140 }}>
+                    <div className="relative" style={{ width: totalWidth, height: AXIS_Y + 60 }}>
                       {/* Axis line */}
-                      <div className="absolute bg-gray-700" style={{ top: 60, left: 20, right: 20, height: 1 }} />
-                      {ordered.map((r, i) => {
+                      <div className="absolute bg-gray-700" style={{ top: AXIS_Y, left: 20, right: 20, height: 1 }} />
+                      {releases.map((r, i) => {
                         const cx = 20 + i * ITEM_W + ITEM_W / 2;
+                        const isHovered = hoveredReleaseId === r.id;
                         return (
-                          <div key={r.id} className="absolute group" style={{ left: cx - 7, top: 0 }}>
-                            {/* Tick */}
-                            <div className="absolute bg-gray-600" style={{ left: 6, top: 48, width: 1, height: 14 }} />
-                            {/* Dot */}
-                            <div className="absolute w-3.5 h-3.5 rounded-full bg-blue-500 border-2 border-gray-950 cursor-default" style={{ top: 53 }} />
-                            {/* Label below axis */}
-                            <div className="absolute text-center" style={{ top: 74, left: -(ITEM_W / 2 - 7), width: ITEM_W }}>
-                              <p className="text-xs font-medium text-gray-300 truncate px-1">{r.name}</p>
-                              <p className="text-xs text-gray-600 mt-0.5">{r.date}</p>
-                            </div>
-                            {/* Hover tooltip above axis */}
-                            <div
-                              className="absolute invisible group-hover:visible z-20 pointer-events-none"
-                              style={{ bottom: 90, left: -(ITEM_W / 2 - 7), width: ITEM_W + 60 }}
-                            >
-                              <div className="bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl">
+                          <div
+                            key={r.id}
+                            className="absolute cursor-default"
+                            style={{ left: cx - ITEM_W / 2, top: 0, width: ITEM_W, height: AXIS_Y + 60 }}
+                            onMouseEnter={() => setHoveredReleaseId(r.id)}
+                            onMouseLeave={() => setHoveredReleaseId(null)}
+                          >
+                            {/* Tooltip above axis */}
+                            {isHovered && (
+                              <div
+                                className="absolute z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl"
+                                style={{ bottom: 60 + (180 - AXIS_Y), left: "50%", transform: "translateX(-50%)", width: 200 }}
+                              >
                                 <p className="text-xs font-semibold text-white mb-1">{r.name}</p>
                                 <p className="text-xs text-gray-400 mb-2">{r.date}</p>
                                 <p className="text-xs text-gray-300 leading-relaxed">{r.summary}</p>
                               </div>
+                            )}
+                            {/* Tick */}
+                            <div className="absolute bg-gray-600" style={{ left: "50%", top: AXIS_Y - 10, width: 1, height: 11 }} />
+                            {/* Dot */}
+                            <div
+                              className={`absolute rounded-full border-2 border-gray-950 transition-colors ${isHovered ? "bg-blue-400" : "bg-blue-500"}`}
+                              style={{ left: "50%", top: AXIS_Y - 6, transform: "translateX(-50%)", width: 14, height: 14 }}
+                            />
+                            {/* Label below axis */}
+                            <div className="absolute text-center" style={{ top: AXIS_Y + 12, left: 0, right: 0 }}>
+                              <p className="text-xs font-medium text-gray-300 truncate px-2">{r.name}</p>
+                              <p className="text-xs text-gray-600 mt-0.5">{r.date}</p>
                             </div>
                           </div>
                         );
