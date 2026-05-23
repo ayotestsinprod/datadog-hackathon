@@ -2,7 +2,8 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { refreshTools, executeTool } from "../../../lib/agent-tools";
+import { refreshTools } from "../../../lib/agent-tools";
+import { runAgent } from "../../../lib/agent-runner";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const systemPrompt = readFileSync(join(process.cwd(), "prompts/refresh.txt"), "utf-8");
@@ -22,48 +23,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   }
 
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: "user",
-      content: `Product ID: ${product_id}\nProduct name: "${name}"${description ? `\nDescription: ${description}` : ""}${links.length ? `\nLinks: ${links.join(", ")}` : ""}`,
-    },
-  ];
-
-  let releases_inserted = 0;
-
-  while (true) {
-    const response = await anthropic.messages.create({
-      model: "claude-opus-4-7",
-      max_tokens: 4096,
-      system: systemPrompt,
+  try {
+    const result = await runAgent({
+      anthropic,
+      agentType: "refresh",
+      systemPrompt,
       tools: refreshTools,
-      messages,
+      model: "claude-opus-4-7",
+      maxTokens: 4096,
+      product: { product_id, name, description, links },
+      send,
     });
-
-    messages.push({ role: "assistant", content: response.content });
-
-    if (response.stop_reason === "end_turn") break;
-
-    if (response.stop_reason === "tool_use") {
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-      for (const block of response.content) {
-        if (block.type !== "tool_use") continue;
-        send({ type: "tool_call", name: block.name });
-        const result = await executeTool(block.name, block.input as Record<string, unknown>);
-        if (block.name === "insert_release") {
-          releases_inserted++;
-          send({ type: "release_inserted", name: (block.input as { name: string }).name });
-        }
-        toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result });
-      }
-
-      messages.push({ role: "user", content: toolResults });
-    } else {
-      break;
-    }
+    send({
+      type: "done",
+      run_id: result.runId,
+      status: result.status,
+      releases_inserted: result.releasesInserted,
+      tool_failures: result.toolFailures,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    send({ type: "error", message });
+  } finally {
+    res.end();
   }
-
-  send({ type: "done", releases_inserted });
-  res.end();
 }

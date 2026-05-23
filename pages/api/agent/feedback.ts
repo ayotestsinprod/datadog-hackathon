@@ -2,16 +2,28 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { summarizeTools } from "../../../lib/agent-tools";
+import { feedbackTools } from "../../../lib/agent-tools";
 import { runAgent } from "../../../lib/agent-runner";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const systemPrompt = readFileSync(join(process.cwd(), "prompts/summarize.txt"), "utf-8");
+const systemPrompt = readFileSync(join(process.cwd(), "prompts/feedback.txt"), "utf-8");
+
+function ymd(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Rolling ~90-day window for feedback discovery (UTC calendar dates). */
+function feedbackSearchWindow(): { start_date: string; end_date: string } {
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCMonth(start.getUTCMonth() - 3);
+  return { start_date: ymd(start), end_date: ymd(end) };
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { product_id, name, releases = [] } = req.body;
+  const { product_id, name, description = "", links = [] } = req.body;
   if (!product_id || !name) return res.status(400).json({ error: "product_id and name are required" });
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -23,27 +35,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   }
 
-  const releaseSummary = releases.length
-    ? `\nKnown releases:\n${releases.map((r: { name: string; date: string }) => `- ${r.name} (${r.date})`).join("\n")}`
-    : "";
-
   try {
+    const { start_date, end_date } = feedbackSearchWindow();
     const result = await runAgent({
       anthropic,
-      agentType: "summarize",
+      agentType: "feedback",
       systemPrompt,
-      tools: summarizeTools,
+      tools: feedbackTools,
       model: "claude-opus-4-7",
       maxTokens: 8192,
-      product: { product_id, name },
-      additionalUserContent: releaseSummary,
+      product: { product_id, name, description, links },
+      additionalUserContent: `\n\nFeedback discovery scope:\n- start_date: ${start_date}\n- end_date: ${end_date}\n- Sources only: reddit.com and (x.com OR twitter.com). Ignore any other domains even if you know of useful feedback elsewhere.`,
       send,
     });
     send({
       type: "done",
       run_id: result.runId,
       status: result.status,
-      summaries_inserted: result.summariesInserted,
+      feedback_inserted: result.feedbackInserted,
       tool_failures: result.toolFailures,
     });
   } catch (err) {

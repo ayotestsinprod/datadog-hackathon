@@ -45,13 +45,16 @@ export async function nimbleSearch(input: NimbleSearchInput): Promise<NimbleSear
   const apiKey = process.env.NIMBLE_API_KEY;
   if (!apiKey) throw new Error("NIMBLE_API_KEY is not set");
 
+  // This project is on a Nimble tier that only allows lite search; other depths return 403.
+  const body = { ...input, search_depth: "lite" as const };
+
   const res = await fetch(NIMBLE_SEARCH_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(input),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

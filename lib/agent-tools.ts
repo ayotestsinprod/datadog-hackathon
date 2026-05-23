@@ -1,6 +1,19 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { insertProduct, insertRelease, searchProductsByName, getReleasesForProduct, updateProduct, getFeedbackSummariesForProduct, getFeedbackInRange, insertFeedbackSummary } from "./db";
-import { nimbleSearch, type SearchDepth } from "./nimble";
+import {
+  insertProduct,
+  insertRelease,
+  insertFeedback,
+  searchProductsByName,
+  getReleasesForProduct,
+  getFeedbackForProduct,
+  updateProduct,
+  getFeedbackSummariesForProduct,
+  getFeedbackInRange,
+  insertFeedbackSummary,
+} from "./db";
+import { nimbleSearch } from "./nimble";
+
+type FeedbackSourceType = "twitter" | "youtube" | "blog" | "review_site" | "other";
 
 const allTools: Anthropic.Tool[] = [
   {
@@ -65,14 +78,16 @@ const allTools: Anthropic.Tool[] = [
   },
   {
     name: "nimble_search",
-    description: "Search the live web via Nimble for up-to-date information about a product, model, or topic. Returns ranked results with title, description, URL, and (for 'fast' depth) ~2K chars of page content. Use this to discover authoritative release pages, official changelogs, and recent news. Prefer 'fast' when you need content snippets; 'lite' when you just need a list of URLs.",
+    description:
+      "Search the live web via Nimble for up-to-date information about a product, model, or topic. Returns ranked results with title, short description, and URL (lite search — no full page body). Use fetch_url on promising URLs when you need the full page text for releases, sentiment, or metadata.",
     input_schema: {
       type: "object" as const,
       properties: {
         query: { type: "string", description: "Search query, e.g. 'Claude Opus 4.7 release notes'" },
         max_results: { type: "integer", description: "Number of results to return (1-20). Default 5." },
-        search_depth: { type: "string", enum: ["lite", "fast"], description: "'lite' = titles/descriptions only; 'fast' = adds page content. Default 'fast'." },
-        time_range: { type: "string", enum: ["hour", "day", "week", "month", "year"], description: "Restrict results by recency." },
+        time_range: { type: "string", enum: ["hour", "day", "week", "month", "year"], description: "Restrict results by recency (coarse). Prefer start_date/end_date for an exact window." },
+        start_date: { type: "string", description: "YYYY-MM-DD — include results on or after this date." },
+        end_date: { type: "string", description: "YYYY-MM-DD — include results on or before this date." },
         include_domains: { type: "array", items: { type: "string" }, description: "Whitelist of domains." },
         exclude_domains: { type: "array", items: { type: "string" }, description: "Blacklist of domains." },
       },
@@ -91,6 +106,38 @@ const allTools: Anthropic.Tool[] = [
         summary: { type: "string", description: "1-2 sentence summary of what changed" },
       },
       required: ["product_id", "name", "date", "summary"],
+    },
+  },
+  {
+    name: "search_feedback",
+    description: "Get all existing feedback rows for a product. Use before inserting to avoid duplicating the same source_url.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        product_id: { type: "string" },
+      },
+      required: ["product_id"],
+    },
+  },
+  {
+    name: "insert_feedback",
+    description: "Insert one feedback row (a single post/comment/review about the product). Classify sentiment with a 1-10 score. Only call for source_urls not already in the database.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        product_id: { type: "string" },
+        source_url: { type: "string", description: "Canonical URL of the post/thread/video/review" },
+        source_type: {
+          type: "string",
+          enum: ["twitter", "youtube", "blog", "review_site", "other"],
+          description: "twitter = X/Twitter; youtube = YouTube; blog = vendor/personal blog post; review_site = G2/Product Hunt/Trustpilot/etc; other = Reddit, HN, forums, anything else",
+        },
+        score: { type: "integer", minimum: 1, maximum: 10, description: "Sentiment 1-10. 1-3 = negative (complaints, churn, frustration). 4-5 = neutral/mixed. 6-7 = mildly positive. 8-10 = strongly positive (praise, recommendations)." },
+        date: { type: "string", description: "When the feedback was posted (YYYY-MM-DD). If unknown, use today." },
+        raw_text: { type: "string", description: "The actual feedback text — quote, excerpt, or summary of what the author said about the product. Keep under 500 chars." },
+        release_id: { type: "string", description: "Optional. Set if this feedback is clearly about a specific release; otherwise omit." },
+      },
+      required: ["product_id", "source_url", "source_type", "score", "date", "raw_text"],
     },
   },
 ];
@@ -160,6 +207,11 @@ export const refreshTools = allTools.filter((t) =>
   ["search_releases", "fetch_url", "nimble_search", "insert_release"].includes(t.name)
 );
 
+/** Tools for discovering public feedback via Nimble and writing `release_feedback` */
+export const feedbackTools = allTools.filter((t) =>
+  ["search_feedback", "nimble_search", "fetch_url", "insert_feedback"].includes(t.name)
+);
+
 export const summarizeTools = summarizeToolDefs;
 
 export async function executeTool(
@@ -200,6 +252,14 @@ export async function executeTool(
       const res = await fetch(input.url as string, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; PulseBot/1.0)" },
       });
+      if (!res.ok) {
+        const body = await res.text();
+        return JSON.stringify({
+          error: `Failed to fetch ${input.url}: HTTP ${res.status} ${res.statusText}`,
+          status: res.status,
+          body_preview: body.slice(0, 500),
+        });
+      }
       const html = await res.text();
       const text = html
         .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
@@ -224,13 +284,32 @@ export async function executeTool(
     return JSON.stringify({ id });
   }
 
+  if (toolName === "search_feedback") {
+    const feedback = await getFeedbackForProduct(input.product_id as string);
+    return JSON.stringify(feedback.map((f) => ({ id: f.id, source_url: f.source_url, source_type: f.source_type, score: f.score, date: f.date })));
+  }
+
+  if (toolName === "insert_feedback") {
+    const id = await insertFeedback({
+      product_id: input.product_id as string,
+      release_id: (input.release_id as string | undefined) ?? null,
+      date: input.date as string,
+      source_url: input.source_url as string,
+      source_type: input.source_type as FeedbackSourceType,
+      score: input.score as number,
+      raw_text: input.raw_text as string,
+    });
+    return JSON.stringify({ id });
+  }
+
   if (toolName === "nimble_search") {
     try {
       const result = await nimbleSearch({
         query: input.query as string,
         max_results: (input.max_results as number) ?? 5,
-        search_depth: ((input.search_depth as SearchDepth) ?? "fast"),
         time_range: input.time_range as "hour" | "day" | "week" | "month" | "year" | undefined,
+        start_date: input.start_date as string | undefined,
+        end_date: input.end_date as string | undefined,
         include_domains: input.include_domains as string[] | undefined,
         exclude_domains: input.exclude_domains as string[] | undefined,
       });
