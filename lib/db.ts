@@ -8,6 +8,7 @@ export interface Product {
   name: string;
   description: string;
   links: string[];
+  favicon_url: string;
   created_at?: string;
 }
 
@@ -56,6 +57,18 @@ export async function insertProduct(p: Omit<Product, "id">): Promise<string> {
     format: "JSONEachRow",
   });
   return id;
+}
+
+export async function updateProduct(id: string, fields: { description?: string; links?: string[]; favicon_url?: string }): Promise<void> {
+  const setParts: string[] = [];
+  if (fields.description !== undefined) setParts.push(`description = {description:String}`);
+  if (fields.links !== undefined) setParts.push(`links = {links:Array(String)}`);
+  if (fields.favicon_url !== undefined) setParts.push(`favicon_url = {favicon_url:String}`);
+  if (setParts.length === 0) return;
+  await clickhouse.command({
+    query: `ALTER TABLE products UPDATE ${setParts.join(", ")} WHERE id = {id:String}`,
+    query_params: { id, ...fields },
+  });
 }
 
 export async function insertRelease(r: Omit<Release, "id">): Promise<string> {

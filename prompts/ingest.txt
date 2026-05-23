@@ -13,6 +13,12 @@ STEP 2 — CHECK EXISTING RELEASES
 Call search_releases with the product ID from step 1.
 Make a note of all release names already stored. You will use this to avoid inserting duplicates.
 
+STEP 2b — POPULATE MISSING PRODUCT FIELDS
+If the product's description is empty or its links array is empty, call update_product to fill them in.
+Use your knowledge of the product to write a concise 1-2 sentence description and identify the best official URLs
+(homepage, changelog page, GitHub releases page, etc.).
+Skip this step if both description and links are already populated.
+
 STEP 3 — FETCH THE OFFICIAL RELEASES PAGE
 Using your knowledge of the product, identify the most likely URL for its official releases or changelog. Examples:
 - GitHub projects: https://github.com/{owner}/{repo}/releases

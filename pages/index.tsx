@@ -30,10 +30,15 @@ export default function Home() {
   const [hoveredReleaseId, setHoveredReleaseId] = useState<string | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const refreshButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     fetch("/api/products").then((r) => r.json()).then(setProducts);
   }, []);
+
+  useEffect(() => {
+    if (selectedProduct) refreshButtonRef.current?.focus();
+  }, [selectedProduct]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -67,20 +72,15 @@ export default function Home() {
     await loadReleases(p.id);
   }
 
-  async function runIngest(body: object, onDone: (product_id: string) => Promise<void>) {
-    setLoadingIngest(true);
-    setStreamLog([]);
-
-    const res = await fetch("/api/agent/ingest", {
+  async function streamAgent(endpoint: string, body: object, onEvent?: (e: Record<string, unknown>) => void): Promise<void> {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -89,46 +89,59 @@ export default function Home() {
       buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.startsWith("data: ")) continue;
-        const event = JSON.parse(line.slice(6));
-        if (event.type === "tool_call") {
-          setStreamLog((l) => [...l, `→ ${event.name}`]);
-        } else if (event.type === "release_inserted") {
-          setStreamLog((l) => [...l, `  ✓ ${event.name}`]);
-        } else if (event.type === "done") {
-          await onDone(event.product_id);
-        }
+        const event = JSON.parse(line.slice(6)) as Record<string, unknown>;
+        if (event.type === "tool_call") setStreamLog(() => [`→ ${event.name}`]);
+        if (event.type === "release_inserted") setStreamLog(() => [`✓ ${event.name}`]);
+        onEvent?.(event);
       }
     }
-
-    setLoadingIngest(false);
   }
 
   async function handleRefresh() {
     if (!selectedProduct) return;
-    await runIngest(
-      { name: selectedProduct.name, description: selectedProduct.description, links: selectedProduct.links },
-      async (product_id) => {
-        await loadReleases(product_id ?? selectedProduct.id);
-      }
-    );
+    setLoadingIngest(true);
+    setStreamLog([]);
+    const p = selectedProduct;
+    const agentBody = { product_id: p.id, name: p.name, description: p.description, links: p.links };
+    await streamAgent("/api/agent/refresh", agentBody);
+    await loadReleases(p.id);
+    // Re-fetch product to pick up any updated metadata
+    const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+    const fresh = updated.find((x) => x.id === p.id);
+    if (fresh) { setSelectedProduct(fresh); setProducts(updated); }
+    setLoadingIngest(false);
   }
 
   async function handleCreate() {
     const links = newLinks.split("\n").map((l) => l.trim()).filter(Boolean);
-    await runIngest(
-      { name: query, description: newDesc, links },
-      async (product_id) => {
-        const productsRes = await fetch("/api/products");
-        const updated: Product[] = await productsRes.json();
-        setProducts(updated);
-        const created = updated.find((p) => p.id === product_id);
-        if (created) {
-          setSelectedProduct(created);
-          setIsNew(false);
-          await loadReleases(created.id);
-        }
-      }
-    );
+
+    // Create product row immediately
+    const createRes = await fetch("/api/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: query, description: newDesc, links }),
+    });
+    const { id: product_id } = await createRes.json();
+
+    setSelectedProduct({ id: product_id, name: query, description: newDesc, links, favicon_url: "" });
+    setIsNew(false);
+
+    setLoadingIngest(true);
+    setStreamLog([]);
+    const agentBody = { product_id, name: query, description: newDesc, links };
+
+    // Run both agents sequentially: first populate metadata, then fetch releases
+    await streamAgent("/api/agent/initialize", agentBody);
+    await streamAgent("/api/agent/refresh", agentBody);
+
+    // Re-fetch product to get populated description/links/favicon
+    const updated: Product[] = await fetch("/api/products").then((r) => r.json());
+    setProducts(updated);
+    const fresh = updated.find((p) => p.id === product_id);
+    if (fresh) setSelectedProduct(fresh);
+
+    await loadReleases(product_id);
+    setLoadingIngest(false);
   }
 
   return (
@@ -240,7 +253,12 @@ export default function Home() {
           <div className="bg-gray-900 border border-gray-700 rounded-lg p-5 mb-6">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <h2 className="text-base font-semibold mb-1">{selectedProduct.name}</h2>
+                <div className="flex items-center gap-2 mb-1">
+                  {selectedProduct.favicon_url && (
+                    <img src={selectedProduct.favicon_url} alt="" className="w-4 h-4 rounded-sm" />
+                  )}
+                  <h2 className="text-base font-semibold">{selectedProduct.name}</h2>
+                </div>
                 {selectedProduct.description && (
                   <p className="text-sm text-gray-400 mb-2">{selectedProduct.description}</p>
                 )}
@@ -261,7 +279,8 @@ export default function Home() {
                 )}
               </div>
               <button
-                className="shrink-0 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-sm px-4 py-2 rounded-lg disabled:opacity-50 transition-colors"
+                ref={refreshButtonRef}
+                className="shrink-0 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-sm px-4 py-2 rounded-lg disabled:opacity-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
                 onClick={handleRefresh}
                 disabled={loadingIngest}
               >
@@ -284,8 +303,8 @@ export default function Home() {
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-6">
               Releases
             </p>
-            {loadingReleases ? (
-              <p className="text-sm text-gray-500">Loading…</p>
+            {loadingReleases || (loadingIngest && releases.length === 0) ? (
+              <p className="text-sm text-gray-500 animate-pulse">Loading…</p>
             ) : releases.length === 0 ? (
               <p className="text-sm text-gray-500">
                 No releases yet — hit Refresh to fetch them.
@@ -297,6 +316,7 @@ export default function Home() {
               >
                 {(() => {
                   const ITEM_W = 140;
+                  const TOOLTIP_W = 220;
                   const AXIS_Y = 170;
                   const totalWidth = Math.max(releases.length * ITEM_W + 60, 500);
                   return (
@@ -306,6 +326,9 @@ export default function Home() {
                       {releases.map((r, i) => {
                         const cx = 20 + i * ITEM_W + ITEM_W / 2;
                         const isHovered = hoveredReleaseId === r.id;
+                        // Clamp tooltip so it never overflows the scroll container
+                        const rawLeft = cx - TOOLTIP_W / 2;
+                        const tooltipLeft = Math.max(4, Math.min(rawLeft, totalWidth - TOOLTIP_W - 4));
                         return (
                           <div
                             key={r.id}
@@ -314,11 +337,11 @@ export default function Home() {
                             onMouseEnter={() => setHoveredReleaseId(r.id)}
                             onMouseLeave={() => setHoveredReleaseId(null)}
                           >
-                            {/* Tooltip above axis — anchored to top of container */}
+                            {/* Tooltip — clamped to stay within scroll bounds, max height to prevent vertical overflow */}
                             {isHovered && (
                               <div
-                                className="absolute z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl"
-                                style={{ top: 4, left: "50%", transform: "translateX(-50%)", width: 200 }}
+                                className="absolute z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl overflow-y-auto"
+                                style={{ top: 4, left: tooltipLeft - (cx - ITEM_W / 2), width: TOOLTIP_W, maxHeight: AXIS_Y - 16 }}
                               >
                                 <p className="text-xs font-semibold text-white mb-1">{r.name}</p>
                                 <p className="text-xs text-gray-400 mb-2">{r.date}</p>
